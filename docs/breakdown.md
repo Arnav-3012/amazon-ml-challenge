@@ -214,8 +214,9 @@ Evidence: the first 200k rows of each source file, counting script per field × 
 **Resolved open questions:**
 - **Scale:** train S1 2.21M / S2 5.03M / S3 5.29M; test S1 1.73M / S2 4.89M / S3 5.08M rows.
 - **Singleton rate:** 5.58% (from M1). **Cardinality:** median 3 matches/S1, p90 6, max 11.
-- **S2/S3 under >1 S1:** **0 of 7,638,365 matched ids** — the one-to-one assignment assumption
-  holds EXACTLY on train, not just approximately. Per-component Hungarian assignment in the
+- **S2/S3 under >1 S1:** **0 of 7,638,365 matched ids** — the one-to-one-per-S2/S3-record
+  assumption holds EXACTLY on train, not just approximately (assignment is many-to-one: each
+  S2/S3 record → ≤1 S1, each S1 → many). Per-record argmax-with-threshold assignment in the
   decision layer is now the standard pick, not a "heavy" option (strict-old-man correction).
 - **Country consistency:** 100.00% of true pairs have S1.country == match.country; 0% missing
   country either side. Country is a clean, safe blocking pre-filter and normaliser router — the
@@ -237,15 +238,17 @@ Evidence: the first 200k rows of each source file, counting script per field × 
 - **Empty name/address:** 0% everywhere — no null-handling branch needed in the normaliser.
 
 **Leaf confidence updates / decisions this overturns:**
-- **Leaf 2 (blocking), hardware plan — OVERTURNED.** Naive top-20-per-channel blocking on the full
-  S1 gives an estimated **~44M candidate pairs** (`BLOCK_K=20 * |S1|=2,206,821`), well over the
-  ~1-2M brute-force-numpy-cosine ceiling the original hardware plan assumed. **Decision: M3's
-  blocking must either (a) cut k well below 20, (b) restrict the candidate pool per S1 to its
-  country before scoring (country consistency = 100% on train supports this), or (c) move to
-  FAISS-IVF earlier than planned.** Country pre-filtering is the cheapest fix and should be tried
-  first before reaching for FAISS, since it's a ~3-4x reduction for free (US/India/France roughly
-  balanced) with zero recall cost given the 100% country-consistency finding. Confidence: high
-  (this is now a data-verified number, not an estimate).
+- **Leaf 2 (blocking), hardware plan — OVERTURNED, see Revision 2a for a correction to this
+  entry.** Naive top-20-per-channel blocking on the full S1 gives an estimated **~44M candidate
+  pairs** (`BLOCK_K=20 * |S1|=2,206,821`) — this number itself is fine to score in chunks; the
+  real cost is the *search* (2.2M S1 queries × ~10M S2+S3 candidates), which is infeasible
+  brute-force regardless of k. **Decision: M3's blocking must use an inverted-index/ANN structure
+  by design (not brute-force cosine as a fallback), plus (b) restrict the candidate pool per S1 to
+  its country before scoring (country consistency = 100% on train supports this).** Country
+  pre-filtering is applied first for its 100%-safe recall (zero cost given the country-consistency
+  finding) — it reduces the search space by ~1.9x on train / ~2.5x on test (1/Σshare², not 3-4x;
+  see Revision 2a), not enough on its own to make brute force viable, so it's a companion to ANN
+  blocking, not a replacement for it. Confidence: high (data-verified).
 - **Leaf 2 (blocking), two-channel design — CONFIRMED, not just plausible.** On 200k sampled true
   pairs: 66.01% both-strong, 15.56% name-only-strong, 15.43% address-only-strong, 0.04% both-weak.
   Either channel alone would miss ~15% of true pairs the other channel alone would catch — the
@@ -256,8 +259,10 @@ Evidence: the first 200k rows of each source file, counting script per field × 
   therefore necessary — random negatives would give a falsely easy offline AUC, exactly the trap
   the original breakdown named. Confidence: high.
 - **Leaf 4 (decision layer), assignment constraint — UPGRADED from "verify on train" to
-  "confirmed, build it as standard."** 0 violations in 7.6M matched ids means the Hungarian /
-  per-connected-component assignment step is justified outright, not conditional.
+  "confirmed, build it as standard."** 0 violations in 7.6M matched ids means the per-record
+  argmax-above-threshold assignment step (many-to-one: each S2/S3 → its best S1 if above
+  threshold) is justified outright, not conditional. See Revision 2a: Hungarian (one-to-one) is
+  the wrong tool for a many-to-one assignment and should not be used here.
 - **Leaf 1 (normalisation) — CONFIRMED region-specific, scope now precise.** D11's top-60 tokens
   per country/source give the actual normaliser vocabulary (not guessed): India needs
   limited/private/ltd/pvt/llp + common OCR-style typos already visible in S2 (`praivet`,
@@ -286,3 +291,59 @@ Evidence: the first 200k rows of each source file, counting script per field × 
   chosen (this EDA gives the *before* picture, not the *after*).
 - FAISS need is conditional on the country-pre-filter decision above; re-measure candidate-pool
   size after applying it before committing to FAISS in M3.
+
+## Revision 2a (correction)
+
+Corrections to Revision 2, caught before M3 build:
+
+1. **The ~1-2M brute-force ceiling referred to vectors in the search index, not candidate pairs.**
+   44M candidate pairs is fine to score in chunks — that's a downstream, embarrassingly-parallel
+   step. The real cost is the *search* itself: 2.2M S1 queries against ~10M S2+S3 index vectors,
+   which is infeasible brute-force regardless of what k is chosen. **Blocking must be built on an
+   inverted-index / ANN structure by design from the start, not reached for as a fallback once
+   brute-force is shown too slow.**
+2. **Country pre-filter reduction is not 3-4x.** The correct reduction ratio for a filter that
+   partitions into groups by share `s_i` is `1/Σ(s_i²)`. On train (US 60% / India 40%, two
+   groups): `1/(0.6² + 0.4²) = 1/0.52 ≈ 1.9x`. On test (three groups, India/US/France roughly
+   ~47/38/15 per the M1/M2 splits): **≈2.5x**. Still worth applying — it's a free, 100%-safe
+   reduction given 100% country consistency on true pairs — but it does not make brute-force
+   search viable on its own; ANN/inverted-index blocking is required regardless.
+3. **Assignment is many-to-one, not one-to-one — Hungarian is the wrong tool.** Each S2/S3 record
+   maps to ≤1 S1 entity, but each S1 entity maps to many S2/S3 records (median 3, p90 6). Hungarian
+   algorithm solves one-to-one bipartite assignment and is the wrong fit here. **Correct rule: each
+   S2/S3 record is assigned to its argmax-scoring S1 entity if that score is above threshold**
+   (a per-record decision, not a global one-to-one matching). Every "Hungarian" reference elsewhere
+   in `docs/` (Revision 2's Leaf 4 assignment-constraint entries, `docs/phases.md`'s M2 closure
+   entry) has been corrected in place to this per-record argmax rule.
+
+**New findings for M3 (from continued data reading, not yet in Revision 2):**
+- Data noise looks synthetic/enumerable — it reads like it was produced by a small set of
+  generator operators (fixed abbreviation swaps, fixed typo patterns, fixed marker insertions like
+  the France "(France)" suffix), not organic free-text variation. **Action: mine the actual
+  operators from train positive pairs (aligned token-level diffs between S1 and its matched
+  S2/S3 records) and invert them explicitly in the normaliser, rather than hand-writing a generic
+  ruleset and hoping it covers what the generator does.**
+- **3.4% of S2/S3 records have an empty address field** (name-only matches) — the normaliser and
+  matcher need an explicit `has_address` handling path (e.g. a feature flag + fallback to
+  name-only similarity), not an implicit assumption that both fields are always populated.
+- **France: S1 uses région while S2/S3 use département** — these are different administrative
+  levels of the same hierarchy, not the same field with noisy formatting; a normaliser or matcher
+  that string-compares them directly will systematically fail on France. City also carries little
+  identity signal for France matches (weak field) — **house number + street name carries most of
+  the real address-match signal for France** and should be weighted accordingly.
+
+## Revision 3 (M3a normaliser v1, `docs/noise_ops.md` + `docs/normalise.md`)
+- **Name alone is not an identity key.** Raw lowercased names already collide within S1 for 38.3% of
+  records (India 43.9%, US 34.6%), and S1 is de-duplicated on name+address. Name-channel blocking will
+  return many same-name/different-address S1 candidates; the matcher's address evidence decides.
+- **Legal form must stay a feature, not be deleted.** Removing it from core_name gives +25.3pp name
+  recall but S1 collision 38.3→50.2% and non-pair collisions 1.0→9.1 ppm; `core_name|legal_form` holds
+  collision at 40.4% (3.0 ppm). Keep `legal_form` as its own matcher feature, not a hard key: 13-18% of
+  true pairs drop it and 8% (US) add one.
+- **India address key is weak by design:** exact (number, street) equality 13.4% of India pairs vs 64.8%
+  US; India addresses rarely start with a house number. India address matching must come from
+  addr_tokens similarity (TF-IDF), not a number+street key. US ceiling: 18.6% of US matches drop the
+  house number entirely.
+- **Recall proxy after v1** (name OR addr exact): US 86.5%, India 60.4% (non-ASCII India 47.6%: the
+  transliteration gap is the main India recall problem for blocking; char n-grams, not exact keys).
+- Reverted rules: country_marker, amp_and, landmark (decisions_mistakes.md).

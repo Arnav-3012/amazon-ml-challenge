@@ -24,7 +24,7 @@ Format: `path | purpose | what to check when something related breaks`. Update t
 - `Documentation_template.md` | methodology template (unfilled copy) for the zip | fill in at M8; the source copy stays in student_resource
 - `output/` | `matching_results.tsv`, `candidate_pairs.tsv` (gitignored) | validator fails → candidates ⊇ matches, one row per test S1
 - `artifacts/` | misc run artifacts, reports (gitignored) | stale results → delete and rerun
-- `interim/` | normalised/parsed data caches (gitignored) | normaliser change not reflected → clear cache
+- `interim/` | unused since M3a (config `interim_dir` now points to `artifacts/interim/`) | kept only for its `.gitkeep`
 - `features/` | pair feature tables (gitignored) | train/serve skew → same feature code for train and test
 - `oof/` | out-of-fold predictions (gitignored) | overconfident thresholds → tuned on OOF, not in-fold?
 - `models/` | trained models (gitignored) | wrong model loaded → filename/seed/config hash
@@ -32,3 +32,9 @@ Format: `path | purpose | what to check when something related breaks`. Update t
 - `code/business_entity_resolution/src/eda.py` | M2 EDA: structure/scripts/difficulty/vocabulary checks; writes `docs/eda.md` | wrong numbers → check sampling seed(42)/logic here, not io.py
 - `docs/eda.md` | EDA output tables (generated, not hand-edited) | stale → rerun `python -m src.eda`
   (eda.py now also covers the eda-fe-entity-resolution-hackathon skill's Steps 1/5/6/7 as section E)
+- `code/business_entity_resolution/src/noise_ops.py` | M3a: mines noise operators from 200k sampled train true pairs → `docs/noise_ops.md` | op missing/miscounted → regexes at top of file; lexicons come from normalise.py
+- `docs/noise_ops.md` | operator × field × country freq% + examples + lexicon-gap tables (generated) | stale → rerun `python -m src.noise_ops`
+- `code/business_entity_resolution/src/normalise.py` | M3a normaliser v1: pure polars rules (`normalise(df, off)`), per-country lexicons, caches all 6 files | rule misfires → its regex/lexicon constant; ablate via `off`; `--smoke N` before full runs
+- `code/business_entity_resolution/src/normalise_eval.py` | M3a eval: recall proxy, precision guard (exact non-pair ppm), per-rule ablation, examples, runtime → `docs/normalise.md` | numbers look off → `keys()`/`nonpair_ppm()`; needs the caches first
+- `docs/normalise.md` | normaliser evaluation tables (generated) | stale → rerun normalise then normalise_eval
+- `artifacts/interim/norm_{split}_s{n}.parquet` | normalised caches (raw columns kept) + `norm_timing.json` | normaliser change not reflected → delete and rerun `python -m src.normalise`

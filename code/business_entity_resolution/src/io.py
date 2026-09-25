@@ -4,6 +4,7 @@ from collections.abc import Iterable, Mapping
 from pathlib import Path
 
 import pandas as pd
+import polars as pl
 import yaml
 
 PKG_DIR = Path(__file__).resolve().parents[1]  # code/business_entity_resolution
@@ -18,18 +19,18 @@ def path(key: str) -> Path:
     return ROOT / CFG["paths"][key]
 
 
-def _read_tsv(p: Path, usecols: list[str] | None = None) -> pd.DataFrame:
+def _read_tsv(p: Path, usecols: list[str] | None = None, nrows: int | None = None) -> pd.DataFrame:
     # QUOTE_NONE: one physical line = one record (every line of every file has exactly 4 tab fields);
     # a few hundred addresses carry CSV-style quotes, kept verbatim rather than risk rows merging.
     # dtype=str is pyarrow-backed under pandas 3; na_filter=False keeps empty fields as "".
     return pd.read_csv(p, sep="\t", dtype=str, keep_default_na=False, na_filter=False,
-                       quoting=csv.QUOTE_NONE, usecols=usecols)
+                       quoting=csv.QUOTE_NONE, usecols=usecols, nrows=nrows)
 
 
-def load_source(split: str, n: int, cols: list[str] | None = None) -> pd.DataFrame:
-    """Load dataset/{split}/{split}_source{n}.tsv; `cols` limits columns (entity_id always kept)."""
+def load_source(split: str, n: int, cols: list[str] | None = None, nrows: int | None = None) -> pd.DataFrame:
+    """Load dataset/{split}/{split}_source{n}.tsv; `cols` limits columns (entity_id always kept), `nrows` rows."""
     cols = SOURCE_COLS if cols is None else ["entity_id", *[c for c in cols if c != "entity_id"]]
-    df = _read_tsv(path(f"{split}_dir") / f"{split}_source{n}.tsv", usecols=cols)
+    df = _read_tsv(path(f"{split}_dir") / f"{split}_source{n}.tsv", usecols=cols, nrows=nrows)
     ids = df["entity_id"]
     assert ids.is_unique, f"{split} S{n}: duplicate entity_id"
     assert ids.str.startswith(f"S{n}-").all(), f"{split} S{n}: entity_id without S{n}- prefix"
@@ -50,6 +51,15 @@ def load_gt(validate: bool = True) -> dict[str, frozenset[str]]:
         bad = matched[~matched.isin(known)]
         assert bad.empty, f"GT: {len(bad)} matched ids not in train S2∪S3, e.g. {bad.head(3).tolist()}"
     return truth
+
+
+def load_gt_pairs() -> pl.DataFrame:
+    """Train ground truth exploded to one row per true pair (s1_id, match_id); singletons drop out."""
+    gt = pl.read_csv(path("train_dir") / "train_ground_truth.tsv", separator="\t", quote_char=None,
+                     infer_schema=False, missing_utf8_is_empty_string=True)
+    return (gt.select(s1_id="source1_entity_id", match_id=pl.col("matched_entity_ids").str.split(","))
+            .explode("match_id").with_columns(pl.col("match_id").str.strip_chars())
+            .filter(pl.col("match_id") != ""))
 
 
 def write_id_lists(p: Path, mapping: Mapping[str, Iterable[str]], id_col: str, list_col: str) -> None:

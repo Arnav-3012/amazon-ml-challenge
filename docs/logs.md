@@ -204,3 +204,78 @@
   sampling and every printed n_sampled value was already 400000 — a display-only bug). Patched
   docs/eda.md's D11 header text to match ("100k" -> "400,000") by hand instead of rerunning the
   full script, since no computed value in the file was affected. Data unchanged.
+
+## 2026-09-25: Revision 2a — correction pass on Revision 2, docs-only
+- Three errors in Revision 2 caught and fixed before M3 build (all logged in
+  `docs/decisions_mistakes.md`):
+  1. The ~1-2M brute-force ceiling is about search-index vectors, not candidate pairs; 44M
+     candidate pairs is fine to score in chunks. The real constraint is the search itself
+     (2.2M S1 × ~10M S2+S3) — infeasible brute-force regardless of k, so blocking must be an
+     inverted-index/ANN structure by design, not a fallback reached for after brute-force proves
+     too slow.
+  2. Country pre-filter reduction recomputed properly as `1/Σ(share²)`: ≈1.9x on train
+     (US 60/India 40), ≈2.5x on test — not the "~3-4x" Revision 2 claimed. Still applied (100%
+     country consistency on true pairs makes it free and safe), but it's a companion to ANN
+     blocking, not a substitute for it.
+  3. Assignment is many-to-one (each S2/S3 → ≤1 S1, each S1 → many), so Hungarian (a one-to-one
+     matcher) was the wrong name for the decision-layer assignment step. Correct rule: each
+     S2/S3 record goes to its argmax-scoring S1 entity if above threshold. Replaced every
+     "Hungarian" reference in `docs/breakdown.md` (Revision 2's two Leaf 4/hardware-plan entries)
+     and `docs/phases.md` (M2 closure entry) with this per-record argmax rule.
+- Also recorded three new M3-facing findings surfaced while re-reading the data: noise looks
+  generator-produced (mine operators from train positive pairs, invert in the normaliser rather
+  than hand-writing rules); 3.4% of S2/S3 records have empty address (need explicit `has_address`
+  handling, not an implicit both-fields-populated assumption); France S1 uses région vs S2/S3's
+  département (different hierarchy levels, not noisy formatting of the same field) and city is a
+  weak identity signal there, so house number + street name should carry most of the address-match
+  weight for France.
+- Files touched: `docs/breakdown.md` (Revision 2a appended; 3 in-place corrections to Revision 2's
+  Hungarian/ceiling/3-4x text), `docs/decisions_mistakes.md` (3 mistakes logged), `docs/phases.md`
+  (Hungarian reference corrected in the M2 closure entry + this entry), `docs/logs.md` (this entry).
+  No code changed.
+
+## 2026-09-25: M3a — noise-operator miner + normaliser v1 + evaluation (code written, NOT run)
+- Pre-checks on raw data (grep/pandas peeks, no pipeline code run): alias names are always
+  `<generated brand> <kw> <real S1 name>` (kw ∈ formerly [known as]/dba/doing business as/trading as/
+  t/a/a/k/a/aka/née, S3 only, ~0.1-0.4% each) → core = right side. `(India)` sits in 2.0% of S1 names
+  (organic, like France's `(France)` at 8% of test S1) → one `country_marker` rule, India is the train
+  proxy for the France-only strip. Digits inside words in S2 names: 0/1/5/8/6 (2/3/9 ≈ 0); `1` = `l`.
+  `n°` becomes `ndeg` after anyascii; `praivet`/`piraivet`/`elelpi` are anyascii of Devanagari legal
+  words, not typos.
+- `src/noise_ops.py`: 200k seeded true pairs, name + address operators per country, lexicon-gap tables
+  (unmapped legal-form look-alikes, state variants, honorific add vs S1 base rate, alias side).
+- `src/normalise.py`: 17 ablatable rules in polars expressions (Rust regex: no lookaround, so token
+  rules run on lists; digit_fix moved after punct strip for token boundaries). Lexicons per country,
+  seeded from EDA D11 + the pre-checks; must be re-checked against `docs/noise_ops.md` before the cache
+  run. `--smoke N` prints rate + projection first (eda.py lesson).
+- `src/normalise_eval.py`: precision guard uses the EXACT same-country non-pair collision rate from
+  group counts (Σ c1·c2 − equal true pairs) / (N1·N2 − T), not 200k random non-pairs: C7 already
+  showed exact-name rate 0.00% on 200k random pairs, so a sampled guard could not move.
+- `src/io.py`: `load_source(nrows=)`, `load_gt_pairs()` (polars). Config `interim_dir` →
+  `artifacts/interim`. Requirements: `polars==1.44.2`, `polars-runtime-32==1.44.2` (MIT; the user installs).
+- Only `py_compile` was run on the new modules. No results yet; `docs/noise_ops.md` and
+  `docs/normalise.md` don't exist until the user runs the commands.
+- 2026-09-25 (M3a, after `docs/noise_ops.md`): lexicon pass from the gap tables + raw greps. Added:
+  alias kw `fka|f/k/a` (22.7k S3 names, was missing); rule `id_tag` strips "(ID: 22383)"; domain
+  suffix " | www.x.com"; `M/s` prefix (29.3k S3 names) under `honorifics`; `lnc`→inc, `limtid`→ltd;
+  US `trail`→trl; India native-script state translits (mharastr, dilli, krnatk, tmilnatu, pscimbng, …);
+  junk address components (PO BOX/PMB, "X Region") under `null_token`; `hn` house-number prefix.
+  HONORIFICS kept: all six are injected (India smt/shri/sri/mr/dr 1.3-1.7% add vs <=5/80k S1 base;
+  US the 1.33% vs 0.13%); `shree` stays (organic, 612 S1). Left unmapped: one-off `private` typos
+  (~0.4% of India pairs), city suffixes (city/cdp/township), bombay↔mumbai, generic-word swaps
+  (→center/services). Only py_compile run.
+- 2026-09-25 (M3a, smoke 20k rows/file): output correct on 36 sample rows, but ~110us/row (see
+  decisions_mistakes). Rewrote the normaliser hot path to elementwise-only `list.eval`. Same pass fixed
+  3 smoke bugs: "& Co" left a dangling `and` (now stripped when a legal form was removed); India
+  "2 Floor" parsed as house number 2 + street "floor" (floor/unit/shop/plot/... components skipped);
+  "gabriela's" → "gabriela s" (apostrophes now deleted, not spaced). `M/s` moved into HONORIFICS as `m s`.
+  Only py_compile run on the rewrite.
+- 2026-09-25 (M3a eval, `docs/normalise.md`): full run 246s for 6 files (peak RSS 7.6GB); eval 434s
+  (10.9GB). Recall proxy either-key: US 43.0→86.5%, India 14.4→60.4%. Ablation flagged 3 rules →
+  reverted (country_marker, amp_and, landmark). Examples showed 2 defects → fixed: "#98825" name tags
+  (1 in S1 vs ~16k per S2/S3) added to id_tag; glued prefixes "n°68"→"ndeg68" (ADDR_PREFIX space made
+  optional). Breakdown Revision 3 written. Needs one rerun of normalise + eval to confirm.
+- 2026-09-25 (M3a confirm rerun): no ⚠ rules. Either-key recall US 86.61%, India 60.71%; pooled S1
+  name collision 50.11% (core+legal 40.38%). "#NNN" and "n°68" fixes confirmed in examples. New bug seen:
+  with amp_and reverted, "W & W Minerals" → "w w" → dedupe → "w minerals"; single-letter tokens now
+  exempt from dedupe_adjacent. Peak RSS rose to 10.6GB normalise / 11.8GB eval (fits in 24GB).

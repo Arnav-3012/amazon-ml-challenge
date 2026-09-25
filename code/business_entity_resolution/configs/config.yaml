@@ -9,7 +9,7 @@ paths:
   matching_results: output/matching_results.tsv
   candidate_pairs: output/candidate_pairs.tsv
   artifacts_dir: artifacts
-  interim_dir: interim
+  interim_dir: artifacts/interim
   features_dir: features
   oof_dir: oof
   models_dir: models

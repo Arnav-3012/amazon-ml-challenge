@@ -38,10 +38,39 @@ Not yet run on real data. Revision 2 of breakdown.md is written after the real d
 list-rebuilt-in-loop bug). docs/eda.md complete (21 sections, all A-E checks + decisions summary).
 Coverage-checked against both the original 12-point spec and the skill's 8-step checklist: nothing
 missing. Revision 2 of docs/breakdown.md written from the real numbers.
-- Headline results: assignment constraint holds exactly (0 violations) -> Hungarian matching
-  justified; country consistency 100% -> safe pre-filter; two-channel blocking confirmed (66%
-  both-strong, ~15%/15% single-channel-only); naive blocking pool ~44M pairs overturns the
-  brute-force-suffices assumption -> country pre-filter first, FAISS if still needed; blocked
-  negatives are harder than random (gap +27.3) -> train on blocking negatives.
+- Headline results: assignment constraint holds exactly (0 violations) -> per-record argmax
+  assignment justified (many-to-one: each S2/S3 -> its best S1 if above threshold; see Revision 2a
+  for why Hungarian, a one-to-one tool, was the wrong name for this); country consistency 100% ->
+  safe pre-filter; two-channel blocking confirmed (66% both-strong, ~15%/15% single-channel-only);
+  naive blocking pool ~44M pairs overturns the brute-force-suffices assumption -> country
+  pre-filter first, FAISS if still needed; blocked negatives are harder than random (gap +27.3) ->
+  train on blocking negatives.
 - Next milestone: M3 (blocking v1: char-TF-IDF name + address channels + cheap keys, PC/RR per
   country), now informed by the country-pre-filter decision.
+
+## Revision 2a correction (2026-09-25) — docs-only, before M3 build
+**Status:** done. No code touched.
+- Fixed three errors in Revision 2 (full detail: `docs/breakdown.md` Revision 2a,
+  `docs/decisions_mistakes.md`): the brute-force ceiling is a search-index constraint (2.2M S1 ×
+  ~10M S2+S3), not a candidate-pairs one — 44M pairs score fine in chunks, but search needs
+  ANN/inverted-index by design; country pre-filter is ~1.9x (train) / ~2.5x (test) via
+  `1/Σshare²`, not "3-4x"; assignment is many-to-one so it's per-record argmax-above-threshold,
+  not Hungarian (corrected everywhere "Hungarian" appeared in docs/).
+- Added M3-facing findings: noise looks generator-produced (mine + invert operators from train
+  positives); 3.4% of S2/S3 have empty address (need `has_address` handling); France address
+  matching should weight house number + street over city, and région (S1) vs département (S2/S3)
+  are different hierarchy levels, not noisy duplicates of the same field.
+- M3 is still next; this correction changes *how* M3's blocking and decision-layer should be
+  built, not the milestone order.
+
+## M3a: Noise operators + normaliser v1 (2026-09-25) — CODE WRITTEN, NOT RUN
+**Status:** waiting on the user's runs. No blocking yet (M3b).
+- Written: `src/noise_ops.py` → `docs/noise_ops.md`; `src/normalise.py` → `artifacts/interim/norm_*.parquet`;
+  `src/normalise_eval.py` → `docs/normalise.md`.
+- Gate before the cache run: read the lexicon-gap tables in `docs/noise_ops.md`; trim `HONORIFICS` to
+  tokens whose add rate clearly beats their S1 base rate; add any unmapped legal-form/state variants.
+- Gate after the eval: any ⚠ rule in the ablation gets reverted or narrowed, and logged in
+  `decisions_mistakes.md`.
+- **Next:** M3b blocking v1 on the normalised caches.
+- 2026-09-25 update: noise_ops + normalise + eval ran. 3 rules reverted, 2 fixes, Revision 3 written.
+  Remaining for M3a: one confirm rerun (normalise + eval), then commit. Next: M3b blocking.
