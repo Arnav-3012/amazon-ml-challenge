@@ -12,7 +12,10 @@ Format: `path | purpose | what to check when something related breaks`. Update t
 - `docs/decisions_mistakes.md` | right calls / mistakes | repeating an error → check Mistakes first
 - `docs/source/` | original PS (RTF), our breakdown, video transcript | never edit; spec disputes resolve here
 - `code/business_entity_resolution/` | submission code root (copied into zip) | repro fails → run from repo root, paths in config
-- `code/business_entity_resolution/src/` | pipeline package (empty at M0) | ImportError → `__init__.py`, run from repo root
+- `code/business_entity_resolution/src/` | pipeline package; run modules as `python -m src.<mod>` from `code/business_entity_resolution/` | ImportError → wrong cwd, or `__init__.py` missing
+- `code/business_entity_resolution/src/io.py` | config/paths (ROOT = repo root via `__file__`), `load_source`, `load_gt`, `write_id_lists` | row-count/parse issues → `quoting=csv.QUOTE_NONE`, `na_filter=False`; FileNotFound → `dataset` symlink; the name shadows stdlib `io` only if cwd = `src/`
+- `code/business_entity_resolution/src/metric.py` | exact macro-F0.5 replica + singleton breakdown; `python -m src.metric` self-test | local vs LB disagreement → singleton rule, missing pred key = empty
+- `code/business_entity_resolution/src/baseline_empty.py` | all-empty baseline (score must = singleton rate), data stats, all-empty test outputs | assert fails → metric or GT parsing
 - `code/business_entity_resolution/configs/config.yaml` | seed + all paths (relative to repo root) | FileNotFound → paths here vs cwd
 - `code/business_entity_resolution/README.md` | reproduction instructions | reviewer can't reproduce → README commands vs actual entrypoint
 - `code/business_entity_resolution/requirements.txt` | exact pinned deps (`uv pip freeze`) | version drift → re-freeze; macOS LightGBM needs `libomp`

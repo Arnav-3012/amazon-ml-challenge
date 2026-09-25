@@ -187,3 +187,24 @@ The original leaves above are unchanged. These deltas override them where they c
 - **Still open (for M2 EDA):** scale; singleton rate; match cardinality; whether any S2/S3 ID sits
   under >1 S1 entity; S2↔S3 co-reference; country consistency across sources for true matches;
   whether country/postcode appears inside address strings.
+
+## Revision 1a (script-mix sample, 2026-09-25)
+Evidence: the first 200k rows of each source file, counting script per field × country (full-file numbers come at M2).
+
+| | S1 | S2/S3 |
+|---|---|---|
+| US | pure ASCII | ~6.8% of names carry Latin accents; addresses ASCII |
+| India | ~ASCII (0.05% accents) | ~18–27% of names and ~23% of addresses non-ASCII: Devanagari ~7–14%, other Indic (Gujarati, Malayalam, …) ~6–10% |
+| France (test) | ~16% of names, ~28% of addresses accented | ~24% of names accented, ~19% of addresses |
+
+- **Cross-script matching is a first-class India problem, and it's in train (so learnable and measurable).**
+  Native script is mostly phonetic transliteration of English/Latin words, not translation.
+- **Normalisation (Leaf 1):** the canonical space is ASCII Latin (S1 already lives there). Transliterate
+  every field to ASCII before char n-grams and string similarities; keep the raw string for the encoder.
+  Accent folding covers US noise and France.
+- **Encoder (Leaf 2/3):** a multilingual encoder alone may miss transliterated English ("यूनिवर्सल" =
+  "universal"). The transliterated char-TF-IDF channel is the primary cross-script channel; the encoder
+  is complementary. Measure both separately on India cross-script positives.
+- **Blocking (Leaf 2):** report PC for India split by "S2/S3 record has native script: yes/no".
+- **Test mix differs from train:** in the sample, India is ~47% of test S1 vs ~40% of train S1, and US
+  is lower. Macro F0.5 is therefore weighted more toward India on test.

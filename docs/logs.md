@@ -38,3 +38,28 @@
   to 5+ IDs mixing S2 and S3.
 - Remote: https://github.com/Arnav-3012/amazon-ml-challenge. Standing rule (CLAUDE.md updated): the
   agent never commits or pushes; it gives the commands and the user runs them.
+
+## 2026-09-25: M1 loader + metric + all-empty baseline (code written, not yet run)
+- Pre-checks (tool-verified): every line in all 7 TSVs has exactly 4 tab-separated fields (the GT has 2);
+  quote chars appear in 4/6/0 train S1/S2/S3 lines and 134/349/330 test lines, as CSV-style `""` escapes
+  → read with `quoting=csv.QUOTE_NONE`. The validator reads line by line (`split("\t")`), consistent with this.
+- Finding for M2: India records mix native scripts (Devanagari, Gujarati, Malayalam) with Latin text,
+  so multilingual handling matters beyond France.
+- Added `src/io.py` (config paths resolved from the repo root; `load_source`, `load_gt` with id-set
+  asserts, `write_id_lists`), `src/metric.py` (f05, macro_f05 + singleton breakdown, `__main__`
+  self-test), and `src/baseline_empty.py` (train all-empty score == singleton rate assert, cardinality
+  histogram, S2/S3 share, rows per source per country for train AND test, all-empty test outputs).
+- Awaiting the user's run: `python -m src.metric`, `python -m src.baseline_empty`, validator.
+- The user flagged multilingual data. Sampled the first 200k rows/file with a perl script-counter
+  (numbers in breakdown.md Revision 1a). S1 is ASCII (except France); India S2/S3 has ~25% native script;
+  US S2/S3 names have ~6.8% injected accents. Added breakdown Revision 1a.
+- **License flag:** `unidecode` (phase-0 dep) is GPL-2.0+. The challenge rule constrains the *model*
+  (MIT/Apache), not libraries, but GPL code in the reproducible package is avoidable risk. The
+  alternative is `anyascii` (ISC, permissive, broader script coverage). Decision pending with the user
+  before the M3 normaliser.
+
+## 2026-09-25: M1 run results
+- User ran metric self-test (PASS) and baseline_empty (assert held): singleton rate = 0.055848
+  (123,247 / 2,206,821). Full cardinality histogram and country row counts logged in phases.md.
+- Validator invocation failed on the first try: run from `code/business_entity_resolution/`, but
+  `utils/` lives at the repo root. Reissued the command with `cd /Users/arnav/amlc2026` first.
