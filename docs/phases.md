@@ -77,3 +77,20 @@ missing. Revision 2 of docs/breakdown.md written from the real numbers.
 - 2026-09-25 M3a DONE: final rerun has no ⚠ rules; "W & W Minerals" → "w w minerals" confirmed. Final
   either-key recall US 86.61%, India 60.71% (non-ASCII 47.85%); pooled S1 name collision 50.11%
   (core+legal 40.38%). 6 files normalise in 230s, peak 10.6GB. Next: M3b blocking on artifacts/interim.
+
+## M3b: Blocking v1 + PC report (2026-09-25) — CODE WRITTEN, NOT RUN
+**Status:** waiting on the user's runs.
+- Written: `src/phonetic.py`, `src/block.py` → `artifacts/interim/{idf,candidates,blockgrid}_*.parquet` +
+  `output/candidate_pairs.tsv` (test); `src/block_eval.py` → `docs/blocking.md`.
+- Gate before the full run: `--dry` upper-bound product nnz per channel/source (cap 5000 may be far slower
+  than 1000: cost ∝ Σ df_S1·df_R); `--smoke` for nnz/s.
+- Gate after the eval: the C marginal on India native-script, and the miss-cause table, pick the next lever
+  (m/k, cap, token bigrams, char n-grams).
+- 2026-09-25 update: bigrams + rarest-2 fallback added to A/C before any real run; `--dry` reports
+  zero-survivor % and the product nnz bound incl. both. Trimmed run order: phonetic → dry → smoke 300000 →
+  full train cap 1000 → block_eval. Cap sweeps and the test run are deferred.
+- 2026-09-25 update: composite name×address tokens → PC 90.9 → 97.2% (all channels) / 96.3% X-only @31/S1.
+  Budget fixed at X m5/k10 (F0.5 ceiling 0.9873). Remaining for M3b: refinalize + diag confirm, test run
+  (writes output/candidate_pairs.tsv) + validator. Then M4.
+- 2026-09-25 M3b DONE: train candidates = X m5/k10, PC 96.31%, perfect-matcher F0.5 ceiling 0.9873, ~69M pairs.
+  Test block run + candidate_pairs.tsv happen at M4 inference. Next: M4 GBM matcher (first real submission).

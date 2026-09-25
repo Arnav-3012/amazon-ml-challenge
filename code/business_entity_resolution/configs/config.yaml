@@ -1,6 +1,23 @@
 # Paths are relative to the repo root (= submission zip root).
 seed: 42
 
+blocking:
+  df_cap: 1000          # token indexed iff df (S1+S2+S3, same country, same split) <= df_cap
+  m: 5                  # record-centric: top-m S1 per S2/S3 record, per channel
+  k: 10                 # S1-centric: top-k records per S1, per channel, per source (S2 and S3 separately)
+  select: [X]           # channels whose m/k hits define the candidate set (others kept as features). X m5/k10:
+                        # PC 96.31%, perfect-matcher F0.5 ceiling 0.9873 at 31.3 cand/S1 (knee of the budget curve)
+  bigrams: true         # A and C: adjacent name-token bigrams ("a_b", skeleton bigrams in C) as extra tokens, same cap
+  fallback_rarest: true # A and C: a record with no token under the cap keeps its 2 lowest-df linkable tokens
+  sorted_bigrams: true  # bigram key in sorted order: an adjacent word swap gives the same key
+  joined_name: true     # A: name with spaces removed as an extra token ("blairhawaii")
+  composite: true       # X: "K|<name skel>|<addr skel>" pair tokens (name AND address conjunction)
+  sweep_m: [1, 3, 5, 10]     # train only: ranks kept up to max(sweep_m) / max(sweep_k) for the budget curve
+  sweep_k: [10, 30, 60]
+  sweep_df_cap: [500, 1000, 5000]
+  nnz_budget: 40000000  # max upper-bound nnz of one sparse product chunk (memory knob, not a result knob)
+  s1_range: 100000      # S1 rows per merge slice
+
 paths:
   dataset_dir: dataset
   train_dir: dataset/train

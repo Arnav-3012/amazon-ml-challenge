@@ -1,0 +1,57 @@
+PROBLEM: M3b blocking v1 - per test/train S1 entity, retrieve a small candidate set of same-country S2/S3 records that contains ~all true matches; report PC/RR on train.
+DOMAINS: IR(sparse retrieval, inverted index) + DE(streaming, memory-bounded batch) + eval(PC by segment)
+IN: artifacts/interim/norm_{split}_s{1,2,3}.parquet (token lists)   OUT: candidates_{split}.parquet, output/candidate_pairs.tsv, docs/blocking.md   SUCCESS: PC high (plateau) at a candidates/S1 budget the M4 matcher can score; PC split by segment shows where recall is lost
+GIVENS: train S1 2.2M / S2 5.0M / S3 5.3M; test 1.7M/4.9M/5.1M; country 100% consistent on true pairs; each S2/S3 -> <=1 S1; median 3 matches/S1, p90 6; 24GB RAM
+HIDDEN_REQS: candidate file audited (genuine reduction, = exactly what M4 scores); train and test candidates must come from the same code path + same m/k/cap (train/serve skew otherwise); deterministic ties
+ASSUMPTIONS: k is per source (S1-centric top-k over S2 and over S3 separately; processing unit is country x source) | df = S1+S2+S3 of the country, cap on that combined df (bounds both posting lists) | leading vowel -> marker "a" (spec rules alone fail istrn~eastern) | non-initial y = vowel (sistms~systems) | digit tokens not skeletonised
+OPEN_QS: does cap=1000 hide common-name S1s (all name tokens df>1000) from A? -> section 6 cause "shared tokens all over df cap" answers it | is k=30 per source too large for M4 scoring cost?
+
+BIG_PICTURE: blocking = top-n retrieval under a recall-first objective, not classification. Key insight: score = sum of shared IDF is a sparse matrix product (records x vocab)(vocab x S1); the df cap turns it into an inverted index with bounded posting lists, and chunking by an exact per-row cost bound (sum of posting lengths) keeps memory flat. Two directions matter because the metric is per S1: record-centric top-m protects records whose true S1 is one of many lookalikes; S1-centric top-k protects S1s whose records are noisy.
+CUT: pipeline cut (tokens -> df/IDF -> index -> retrieve -> union -> eval) + constraint cut (memory: never dense S1 x S2).
+
+LEAVES:
+[1] phonetic skeleton key
+  type: data prep > lossy phonetic key (Soundex/consonant-skeleton family)
+  why: India native-script records transliterate to vowel-drifting spellings (praivet, sistms); exact tokens miss
+  why_not: learned transliteration -> no aligned data, heavy | char n-gram TF-IDF -> better recall but 3-5x index size; later
+  approaches: rule skeleton (now) | char 3-gram index (if C marginal small but misses show near-spellings) | encoder channel (M7)
+  pick: rule skeleton, applied per distinct token (cheap)
+  concept: collapse the dimensions noise varies on (vowels, aspiration digraphs, nasal place) and keep the stable consonant frame
+  trap: over-collapsing (numbers, short words) -> huge posting lists; df cap makes them self-limiting
+  eval: % true pairs sharing a rare skeleton vs rare normal token, native yes/no; skel-only %
+  confidence: med - voicing (t/d) and aspiration h not folded
+[2] IDF + df cap (the index)
+  type: IR > inverted index > IDF-weighted overlap with stop-token cap
+  why: frequent tokens carry no identity and explode posting lists (cost = sum_t dfS1(t)*dfR(t))
+  why_not: BM25 -> length norm adds little on 2-6 token names | TF-IDF cosine -> needs norms, same retrieval
+  approaches: cap 500 | 1000 | 5000 (budget curve)
+  pick: 1000 start; --dry prints exact upper-bound product nnz per channel before any product
+  concept: idf = ln(N/df); score = sum shared idf; per-row cost bound = sum of posting lengths -> exact chunking
+  trap: a name made only of common tokens ("ganesh traders") has no A tokens -> relies on B; measured as a miss cause
+  eval: PC vs cap, runtime vs cap
+  confidence: med
+[3] retrieval directions + union
+  type: IR > top-n per row of a sparse product, both axes
+  why: per-S1 metric + many-to-one assignment
+  approaches: record-centric only | + S1-centric (pick) | + mutual-rank features later (M4)
+  concept: ranks are intrinsic per direction -> cutting a large (m,k) grid equals a direct small run (budget curve for free)
+  trap: forgetting train/test must use the same cut (finalize() nulls ranks/scores outside m/k)
+  eval: PC per channel alone, A|B, A|B|C; C marginal on India native
+  confidence: high
+[4] eval / miss analysis
+  type: eval > stratified PC + error bucketing
+  cause buckets: rank cut (inside/beyond grid) | all shared tokens over cap | no shared token (no addr / native / ASCII)
+  eval: bucket shares drive next lever: rank cut -> raise m/k; over cap -> token bigrams or name+city key; no shared -> char n-grams / encoder
+
+DEPENDENCIES: 1 -> 2 -> 3 -> 4
+RISKIEST_LEAF: 2 - cap sets both cost and the common-name recall hole; its product cost is quadratic in df, so 5000 may be much slower (check --dry)
+KEY_FORMULAS:
+ score(s1,r) = sum_{t in T(s1) & T(r), df(t)<=cap} ln(N_country/df(t))
+ product nnz <= sum_t dfS1(t)*dfR(t)
+ PC = |true pairs in C| / |true pairs|; RR = 1 - |C| / sum_c N1_c*(N2_c+N3_c)
+GLOSSARY: rrank=rank of S1 among S1s for a record (record-centric); srank=rank of record among a source's records for an S1; grid=superset kept at max(sweep_m)/max(sweep_k)
+DONE (rev 1): A/C adjacent bigrams + rarest-2 fallback (record with no token <= cap keeps its 2 lowest-df linkable tokens)
+BRAINSTORM_SEEDS:
+- name-token x city key as a cheap channel for chains/common names
+- rank features (rrank, srank, score gap to best) straight into the M4 GBM
+- sparse_dot_topn-style fused multiply+top-n if scipy products dominate runtime

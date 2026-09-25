@@ -38,3 +38,12 @@ Format: `path | purpose | what to check when something related breaks`. Update t
 - `code/business_entity_resolution/src/normalise_eval.py` | M3a eval: recall proxy, precision guard (exact non-pair ppm), per-rule ablation, examples, runtime → `docs/normalise.md` | numbers look off → `keys()`/`nonpair_ppm()`; needs the caches first
 - `docs/normalise.md` | normaliser evaluation tables (generated) | stale → rerun normalise then normalise_eval
 - `artifacts/interim/norm_{split}_s{n}.parquet` | normalised caches (raw columns kept) + `norm_timing.json` | normaliser change not reflected → delete and rerun `python -m src.normalise`
+- `code/business_entity_resolution/src/phonetic.py` | M3b phonetic skeleton + `add_skeletons` (name/addr skel tokens); `python -m src.phonetic` = asserts | skeleton misses a variant → rules in `skeleton()`; digit tokens pass through
+- `code/business_entity_resolution/src/block.py` | M3b blocking: channels A/B/C, per-country IDF with df cap, record-centric top-m ∪ S1-centric top-k, A/C bigrams + rarest-2 fallback (config flags), chunked sparse products; `--selftest` (brute-force equivalence), `--dry` (zero-survivor %, nnz bound), `--smoke`; test also writes `output/candidate_pairs.tsv` | OOM → `blocking.nnz_budget`/`s1_range` in config; train/test skew → both cut by `finalize()` at config m/k
+- `code/business_entity_resolution/src/block_eval.py` | M3b eval → `docs/blocking.md` (phonetic check, PC by segment × channel, budget curve, volume/RR, runtime, missed pairs by cause) | cap rows missing → run `src.block --df-cap N`
+- `docs/blocking.md` | blocking evaluation tables (generated) | stale → rerun block then block_eval
+- `artifacts/interim/idf_{split}.parquet` | per country × channel token df per source (n1,n2,n3; df≥2) + n_country; reusable for M4 IDF features | IDF looks off → doc_freq() in block.py
+- `artifacts/interim/candidates_{split}.parquet` | THE candidate set M4 scores: s1_id, rec_id, {A,B,C}_{score,rrank,srank}, n_channels_hit | must equal candidate_pairs.tsv (test)
+- `artifacts/interim/blockgrid_train_cap{cap}.parquet` + `block_timing_{split}_cap{cap}.json` | train superset at m≤10/k≤60 for the budget curve; per-step time/peak RSS/nnz | budget curve only; never scored
+- `problem-breakdowns/` | problem-judgement brainstorm files (plain text) | design doubt → the matching .txt
+- `code/business_entity_resolution/src/block_diag.py` | M3b quick diagnosis (minutes): PC by country × source × native, grid ceiling, m×k budget curve, rank histogram of true S1 | prints only; use before the slow block_eval

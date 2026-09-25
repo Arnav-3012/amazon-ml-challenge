@@ -281,3 +281,70 @@
   exempt from dedupe_adjacent. Peak RSS rose to 10.6GB normalise / 11.8GB eval (fits in 24GB).
 - 2026-09-25 (M3a final): the single-letter dedupe exemption cost 0.01pp name recall (dedupe gain
   +1.239 → +1.229pp) and fixed "w w minerals". Still no ⚠ rules. M3a closed.
+- 2026-09-25 (M3b, code written, not run): `src/phonetic.py` (skeleton + `add_skeletons` over distinct
+  tokens), `src/block.py` (channels A/B/C, per-country IDF, df cap, record-centric top-m ∪ S1-centric
+  top-k per source, sparse products chunked by an exact nnz upper bound, S1-range merge → parquet parts →
+  sink), `src/block_eval.py` → `docs/blocking.md`, `io.write_candidates`, config `blocking:` block.
+  Train keeps ranks up to m=10/k=60 (`blockgrid_train_cap{cap}.parquet`); `candidates_train` = grid cut to
+  config m/k via `finalize()` (nulls out-of-cut ranks/scores so train matches a direct test run).
+  Spec deviations in skeleton: leading vowel → "a" (spec rules fail istrn~eastern), non-initial y = vowel
+  (sistms~systems, keyr~care), digit tokens unchanged. Verified here: py_compile; phonetic asserts; top_n
+  vs brute force on random sparse matrices at 3 chunk budgets; merge has no duplicate pairs; finalize cut.
+  Not run on real data. Judgement: `problem-breakdowns/m3b-blocking.txt`.
+- 2026-09-25 (M3b rev, before any real run): A/C bigrams + rarest-2 fallback (config flags, default on).
+  Refactor in `block.py`: `token_table` (all linkable tokens, `rare` = df ≤ cap) → `survivors()` (rare tokens,
+  or the 2 lowest-df when none, tie by token) → `matrix`; posting lengths from the actual survivors.
+  `--dry` now also runs the survivor pass: % records with zero surviving tokens per country × source × channel
+  (with and without fallback), product nnz upper bound with bigrams+fallback and rare-only, top-3 cost tokens.
+  `add_skeletons` keeps token order (bigrams need it); dedupe moved to `channel_tokens`.
+  `python -m src.block --selftest`: synthetic S1/S2/S3 through the real pipeline vs an independent pure-Python
+  brute force (own bigrams, skeletons, df, fallback, float32 sums), all channels, 3 chunk budgets, both
+  directions. It passes: 184 fallback records and 115 surviving bigram tokens exercised. Still not run on real data.
+- 2026-09-25 (M3b dry, train cap 1000, bigrams+fallback on): 85s, peak 8.1GB. Product nnz upper bound per
+  direction India 0.96B, US 1.93B (~5.8B over both directions). Fallback cost is almost all US A (446M vs
+  125M rare-only on S2; S3 similar), and small elsewhere. Zero-survivor records with fallback: A S2/S3 India
+  17.6/12.5%, US 6.2/6.1% (no token shared with any S1); C 0% everywhere; S1 A/C 0%. B has no fallback:
+  zero-token India S2/S3 22.1/30.6%, US 18.3/17.1%. Go to smoke.
+- 2026-09-25 (M3b smoke 300k rows/file, train): runs end to end in 29s, peak 7.1GB. Sparse products about
+  52M nnz/s (794M nnz in 15s); merge about 9M grid pairs/s (66M in 7.5s). Actual nnz is 90-97% of the upper
+  bound. Smoke df is about 14x smaller than full, so the cap is looser here and smoke zero-token % is lower
+  than dry (India S2 B 6.9 vs 22.1). Full-run projection: products about 2 min, grid about 0.5B rows, peak
+  memory estimated 12-14GB (US S1-centric frames about 240M rows, about 3.3GB).
+- 2026-09-25 (M3b eval run 1): `python -m src.block_eval` ran about 1h25m and exited without writing
+  `docs/blocking.md`. The cause is unknown: it ran in the terminal with no log and the scrollback was not recovered.
+  Before the rerun: `shared_flags` no longer uses explode+join (equivalence checked on synthetic data);
+  a progress log was added (`[elapsed] i/8 step`, sub-steps per country × source group); a crash now prints
+  the traceback + peak RSS. The rerun writes `artifacts/interim/block_eval.log` via tee.
+- 2026-09-25 (M3b first PC): candidates_train = 278,134,881 pairs (~126/S1), grid 499.7M; PC = 90.30%
+  (6,897,769/7,638,365). Far below the ~99.5% the target needs. Added `src/block_diag.py` for a quick
+  per-segment + budget-curve read before the slow eval.
+- 2026-09-25 (M3b diag): PC 90.30% at 126 cand/S1; India 85.4% (native 79-80%), US 93.6%. m=10/k=60 grid
+  ceiling only 92.6% at 226/S1. True S1 is record-centric rank 1 for 78.7% of pairs, top-10 88.5% (slow tail
+  = same-score ties). 565,699 of 740,596 misses are outside every channel's top-10/60. Added channel X (A|t, B|t,
+  C tokens in one index; score = A+B+C) so address breaks name ties in one ranking. Selftest passes with X
+  (4 channels, 3 budgets). Diag now prints X-only vs all-channel budget curves.
+- 2026-09-25 (M3b diag with X): PC 90.92% (+0.6pp); X alone 88.06% at 32 cand/S1 vs all channels 89.04% at 65.
+  The tie hypothesis was mostly wrong: X rank-1 is 81.4% vs best-single 82.2%, and the ceiling is still ~92-93%.
+  545k of 693k misses lie outside every top-10/60 (no shared token, only over-cap tokens, or deep rank:
+  undistinguished). Added `block_eval --sample N` to get the miss-cause split in minutes.
+- 2026-09-25 (M3b sampled eval, 200k pairs, 833s; base_pairs 821s of it: the grid/candidates scans are still
+  full-size): 18,090 misses. Causes: all shared tokens over the cap 50.0%, rank cut beyond grid 29.4%, rank cut
+  inside grid 20.5%, no shared token 3 pairs (0.02%). So char n-grams are not the fix; the lost evidence is the
+  name-AND-address conjunction. Added to X (config flags): composite K|name_skel|addr_skel tokens; A joined name
+  ("blairhawaii"); sorted bigrams (word swaps). Selftest passes with all three. Not run on real data yet.
+- 2026-09-25 (M3b composite run): PC 90.92% → 97.20% (config, all channels, 153.9 cand/S1); X only m=5/k=10
+  88.06% → 96.31% at 31.3/S1. India native 80-82% → 94.4-95.3%. X rank-1 81.4% → 94.3%. Misses 693k → 214k.
+  Composite K|name|addr + joined name + sorted bigrams KEPT. Diag gains a perfect-matcher macro F0.5 ceiling
+  per budget row (formula checked against the exact metric on a toy case).
+- 2026-09-25 (M3b budget decision): perfect-matcher macro F0.5 ceiling per budget row. X m5/k10 = 0.9873 at
+  31.3 cand/S1 (PC 96.31%); config all-channel m5/k30 = 0.9904 at 153.9; best grid 0.9924 at 277. Knee = X m5/k10
+  (after it, +0.001 ceiling costs 15-60 cand/S1). Config: k=10, select=[X] (A/B/C kept as features on selected
+  pairs). New: finalize(select=...), `block --refinalize` re-cuts the train grid in seconds. Selftest + a
+  finalize unit check pass. Widen later (X m10/k10 0.9887 @ 51) only once M4 runs end to end.
+- 2026-09-25 (M3b confirm): refinalize (select=[X], m5/k10) + diag: config PC 96.31% (India 94.71, US 97.39),
+  equal to the X column in every segment; 281,532 misses; F0.5 ceiling 0.9873 @ 31.3 cand/S1. M3b closed.
+  Test block run deferred to M4 inference so test candidates use the final blocking config.
+- 2026-09-25 (M3b test run): `block --split test` 469s, peak 13.7GB; output/candidate_pairs.tsv written, validator
+  PASS (1,732,544 S1 rows, 0 empty candidate lists; matching_results still the M1 all-empty file, not submitted).
+  Pending: one `--check-ids` validator run to confirm every candidate ID exists in test S2/S3.
+- 2026-09-25 (M3b close): validator `--check-ids` PASS: every candidate ID exists in test S2/S3 (9,969,589 valid IDs).

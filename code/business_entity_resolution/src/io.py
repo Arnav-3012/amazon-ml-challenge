@@ -62,6 +62,16 @@ def load_gt_pairs() -> pl.DataFrame:
             .filter(pl.col("match_id") != ""))
 
 
+def write_candidates(p: Path, cands: pl.LazyFrame, s1_ids: pl.Series) -> None:
+    """candidate_pairs.tsv from the exact (s1_id, rec_id) frame the matcher scores; one row per S1 id."""
+    p.parent.mkdir(parents=True, exist_ok=True)
+    agg = cands.group_by("s1_id").agg(ids=pl.col("rec_id").unique().sort().str.join(","))
+    (pl.LazyFrame({"source1_entity_id": s1_ids})
+     .join(agg, left_on="source1_entity_id", right_on="s1_id", how="left", maintain_order="left")
+     .select("source1_entity_id", candidate_entity_ids=pl.col("ids").fill_null(""))
+     .collect().write_csv(p, separator="\t", quote_style="never"))
+
+
 def write_id_lists(p: Path, mapping: Mapping[str, Iterable[str]], id_col: str, list_col: str) -> None:
     """One row per key, comma-joined sorted unique ids ("" when none), tab-separated, no quoting."""
     p.parent.mkdir(parents=True, exist_ok=True)
