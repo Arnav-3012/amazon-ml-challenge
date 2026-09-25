@@ -1,3 +1,4 @@
+anyascii==0.3.3
 cloudpickle==3.1.2
 joblib==1.6.0
 lightgbm==4.7.0
@@ -12,4 +13,3 @@ scikit-learn==1.9.1
 scipy==1.17.1
 six==1.17.0
 threadpoolctl==3.7.0
-unidecode==1.4.0

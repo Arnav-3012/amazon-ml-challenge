@@ -208,3 +208,81 @@ Evidence: the first 200k rows of each source file, counting script per field × 
 - **Blocking (Leaf 2):** report PC for India split by "S2/S3 record has native script: yes/no".
 - **Test mix differs from train:** in the sample, India is ~47% of test S1 vs ~40% of train S1, and US
   is lower. Macro F0.5 is therefore weighted more toward India on test.
+
+## Revision 2 (from EDA, `docs/eda.md`, full train+test scan + sampled checks)
+
+**Resolved open questions:**
+- **Scale:** train S1 2.21M / S2 5.03M / S3 5.29M; test S1 1.73M / S2 4.89M / S3 5.08M rows.
+- **Singleton rate:** 5.58% (from M1). **Cardinality:** median 3 matches/S1, p90 6, max 11.
+- **S2/S3 under >1 S1:** **0 of 7,638,365 matched ids** — the one-to-one assignment assumption
+  holds EXACTLY on train, not just approximately. Per-component Hungarian assignment in the
+  decision layer is now the standard pick, not a "heavy" option (strict-old-man correction).
+- **Country consistency:** 100.00% of true pairs have S1.country == match.country; 0% missing
+  country either side. Country is a clean, safe blocking pre-filter and normaliser router — the
+  EDA-gate from Revision 1a is satisfied.
+- **Distractor rate:** ~25-27% of S2/S3 records match no S1 entity, consistent across S2/S3 and
+  US/India — distractors are a real, evenly-distributed presence, not a corner case.
+- **Non-ASCII / script mix (confirms Revision 1a, now exact):** India S2/S3 name+address ~18-28%
+  non-ASCII (Devanagari, Kannada, Telugu, Tamil, Gujarati, Bengali, Malayalam all present); US S2/S3
+  names ~6-7% accented; **France (test) ~16-28% non-ASCII** across name/address, both S2 and S3.
+  Top scripts by volume: LATIN (accents) > DEVANAGARI > KANNADA/TELUGU/TAMIL/GUJARATI/BENGALI.
+- **Cross-script similarity is high after transliteration:** for true pairs with a non-ASCII match,
+  `token_set_ratio(anyascii(match), S1 name)` has p10=60.7, p50=86.7, p90=100 (n=80,000 sampled).
+  Transliteration recovers most of the signal; the hard tail (p10~60) is real but a minority.
+- **S2/S3 postcode presence is near zero for India (0.00%) and low for US (~10%) and France
+  test (~0.4-0.5%)** — postcode cannot be a primary blocking key for any country; it's a
+  confirming signal at best, not a filter.
+- **Exact duplicate name+address within a source:** S2 ~0.5%, S3 ~0.3-0.4% (train and test) —
+  low enough to ignore for M3, not worth a dedup pre-pass.
+- **Empty name/address:** 0% everywhere — no null-handling branch needed in the normaliser.
+
+**Leaf confidence updates / decisions this overturns:**
+- **Leaf 2 (blocking), hardware plan — OVERTURNED.** Naive top-20-per-channel blocking on the full
+  S1 gives an estimated **~44M candidate pairs** (`BLOCK_K=20 * |S1|=2,206,821`), well over the
+  ~1-2M brute-force-numpy-cosine ceiling the original hardware plan assumed. **Decision: M3's
+  blocking must either (a) cut k well below 20, (b) restrict the candidate pool per S1 to its
+  country before scoring (country consistency = 100% on train supports this), or (c) move to
+  FAISS-IVF earlier than planned.** Country pre-filtering is the cheapest fix and should be tried
+  first before reaching for FAISS, since it's a ~3-4x reduction for free (US/India/France roughly
+  balanced) with zero recall cost given the 100% country-consistency finding. Confidence: high
+  (this is now a data-verified number, not an estimate).
+- **Leaf 2 (blocking), two-channel design — CONFIRMED, not just plausible.** On 200k sampled true
+  pairs: 66.01% both-strong, 15.56% name-only-strong, 15.43% address-only-strong, 0.04% both-weak.
+  Either channel alone would miss ~15% of true pairs the other channel alone would catch — the
+  two-channel union is necessary, not redundant. Confidence: high.
+- **Leaf 3 (matcher), hard negatives — CONFIRMED.** Blocked negatives (top-20 by name similarity,
+  same country, sampled) have name_sim p50 = 60.6 vs random negatives' p50 = 33.3 (gap +27.3
+  points on a 0-100 scale). Training on blocking-produced negatives is materially harder and
+  therefore necessary — random negatives would give a falsely easy offline AUC, exactly the trap
+  the original breakdown named. Confidence: high.
+- **Leaf 4 (decision layer), assignment constraint — UPGRADED from "verify on train" to
+  "confirmed, build it as standard."** 0 violations in 7.6M matched ids means the Hungarian /
+  per-connected-component assignment step is justified outright, not conditional.
+- **Leaf 1 (normalisation) — CONFIRMED region-specific, scope now precise.** D11's top-60 tokens
+  per country/source give the actual normaliser vocabulary (not guessed): India needs
+  limited/private/ltd/pvt/llp + common OCR-style typos already visible in S2 (`praivet`,
+  `limitet`, `piraivet` — phonetic/OCR noise on top of the legal-suffix set, not just legal-suffix
+  variation); France needs sarl/sas/eurl/sasu/sci/sa + rue/avenue/bis/allee/chemin/bd, matching
+  Revision 1a's rule list exactly, plus heavy landmark/prefix noise ("Amicale du", "Comite",
+  "Établissements"). US needs llc/inc/corp/pllc/lp + street-type abbreviations (st/rd/dr/ave/ln)
+  AND full state names appearing in S3 addresses but abbreviated in S1/S2 (`texas` vs `tx`) — this
+  is a new, previously-unflagged US normalisation need: state name/abbreviation must be folded to
+  one form, source-dependent.
+- **New finding, not in Revision 1/1a:** France business names carry an embedded "(France)" or
+  "(Frànce)" parenthetical marker on **6.6-8.0% of records, in all three sources (S1 8.01%, S2
+  6.71%, S3 6.61% of France test rows)** — checked against the full France test slice, not just
+  the D12 sample. **Confirmed name-only: 0.00% of France addresses carry it in any source.** This
+  looks like injected/synthetic noise specific to the France test slice, not an organic naming
+  pattern — strip it as a normalisation step (name field only) so it doesn't inflate or deflate
+  name similarity for reasons unrelated to real business identity.
+- **C9 (within-entity clustering) result is informative but modest:** among-matched-record name
+  similarity p50 = 88.0 vs matched-to-S1 name similarity p50 = 98.7 (n=2000 sampled S1 entities
+  with >=3 matches). Matched records resemble S1 slightly more than they resemble each other —
+  weak evidence for clustering S2∪S3 as a support signal, not a primary channel. Leaf 3's
+  "S2↔S3 agreement" brainstorm idea is worth a small feature, not a redesign.
+
+**Still open (push to M3 EDA-as-you-build, not blocking M3 start):**
+- Exact per-country reduction-ratio/PC tradeoff once a real blocking k and country pre-filter are
+  chosen (this EDA gives the *before* picture, not the *after*).
+- FAISS need is conditional on the country-pre-filter decision above; re-measure candidate-pool
+  size after applying it before committing to FAISS in M3.

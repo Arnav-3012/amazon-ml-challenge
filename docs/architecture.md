@@ -29,3 +29,6 @@ Format: `path | purpose | what to check when something related breaks`. Update t
 - `oof/` | out-of-fold predictions (gitignored) | overconfident thresholds → tuned on OOF, not in-fold?
 - `models/` | trained models (gitignored) | wrong model loaded → filename/seed/config hash
 - `.venv/` | uv venv, Python 3.11 (gitignored) | ImportError → `.venv/bin/python`, reinstall from requirements.txt
+- `code/business_entity_resolution/src/eda.py` | M2 EDA: structure/scripts/difficulty/vocabulary checks; writes `docs/eda.md` | wrong numbers → check sampling seed(42)/logic here, not io.py
+- `docs/eda.md` | EDA output tables (generated, not hand-edited) | stale → rerun `python -m src.eda`
+  (eda.py now also covers the eda-fe-entity-resolution-hackathon skill's Steps 1/5/6/7 as section E)

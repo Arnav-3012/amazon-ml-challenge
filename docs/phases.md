@@ -26,3 +26,22 @@
 - Validator: PASS, 1,732,544/1,732,544 rows in both files, all empty (as expected for the all-empty baseline).
   ID-existence check was off (default; needs `--check-ids`, moot for an all-empty submission). Not run yet.
 - **Next milestone: M2 (EDA).**
+
+## M2: EDA (2026-09-25) — IN PROGRESS
+**Status:** `src/eda.py` written and smoke-tested on a small sample; unidecode->anyascii swap done.
+Not yet run on real data. Revision 2 of breakdown.md is written after the real docs/eda.md exists.
+- Next: user runs `python -m src.eda` from `code/business_entity_resolution/`, shares docs/eda.md
+  (or its key numbers), then Revision 2 gets written from those.
+
+## M2: EDA (2026-09-25) — DONE
+**Status:** eda.py ran successfully (after two perf fixes: vectorized hot paths, then a
+list-rebuilt-in-loop bug). docs/eda.md complete (21 sections, all A-E checks + decisions summary).
+Coverage-checked against both the original 12-point spec and the skill's 8-step checklist: nothing
+missing. Revision 2 of docs/breakdown.md written from the real numbers.
+- Headline results: assignment constraint holds exactly (0 violations) -> Hungarian matching
+  justified; country consistency 100% -> safe pre-filter; two-channel blocking confirmed (66%
+  both-strong, ~15%/15% single-channel-only); naive blocking pool ~44M pairs overturns the
+  brute-force-suffices assumption -> country pre-filter first, FAISS if still needed; blocked
+  negatives are harder than random (gap +27.3) -> train on blocking negatives.
+- Next milestone: M3 (blocking v1: char-TF-IDF name + address channels + cheap keys, PC/RR per
+  country), now informed by the country-pre-filter decision.

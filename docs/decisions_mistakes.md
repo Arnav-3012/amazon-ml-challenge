@@ -10,4 +10,5 @@ Log wrong turns the moment they are identified. Format: `date | item | why`.
 - 2026-09-25 | Canonical matching space = ASCII-transliterated Latin; raw kept for the encoder | S1 is ASCII while India S2/S3 is ~25% native script (Revision 1a)
 
 ## Mistakes
-_(none yet)_
+- 2026-09-25 | eda.py first version had unvectorized `.apply(axis=1)`/dict-loop paths over 5M+ row files, only ever smoke-tested at ~400-row scale | wasted 27+ min of the user's wall-clock time before being killed; should have sanity-checked op-count (rows x per-row cost) against real file sizes before declaring it ready, not just checked "does it run on a tiny sample"
+- 2026-09-25 | First eda.py "audit every hot path" pass missed a `list(2.2M-entry dict)` rebuilt inside a 200k-iteration while loop (C7 negative sampling) — the real bottleneck, ~33 min alone | should have grepped for list()/dict() calls inside loop bodies specifically, not just `.apply(axis=1)` patterns; caught only on the SECOND killed run, wasting another ~12 min of the user's time
