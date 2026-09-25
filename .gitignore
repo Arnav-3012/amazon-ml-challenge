@@ -1,0 +1,26 @@
+# env
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+
+# data (symlink to ../student_resource/dataset; never commit)
+dataset
+dataset/
+
+# generated outputs / intermediates (keep folders via .gitkeep)
+output/*
+artifacts/*
+interim/*
+features/*
+oof/*
+models/*
+!output/.gitkeep
+!artifacts/.gitkeep
+!interim/.gitkeep
+!features/.gitkeep
+!oof/.gitkeep
+!models/.gitkeep
+
+# packaging
+*_submission.zip

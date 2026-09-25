@@ -1,0 +1,16 @@
+# Paths are relative to the repo root (= submission zip root).
+seed: 42
+
+paths:
+  dataset_dir: dataset
+  train_dir: dataset/train
+  test_dir: dataset/test
+  output_dir: output
+  matching_results: output/matching_results.tsv
+  candidate_pairs: output/candidate_pairs.tsv
+  artifacts_dir: artifacts
+  interim_dir: interim
+  features_dir: features
+  oof_dir: oof
+  models_dir: models
+  validator: utils/validate_submission.py
