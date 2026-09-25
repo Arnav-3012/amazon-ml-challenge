@@ -279,3 +279,5 @@
   name collision 50.11% (core+legal 40.38%). "#NNN" and "n°68" fixes confirmed in examples. New bug seen:
   with amp_and reverted, "W & W Minerals" → "w w" → dedupe → "w minerals"; single-letter tokens now
   exempt from dedupe_adjacent. Peak RSS rose to 10.6GB normalise / 11.8GB eval (fits in 24GB).
+- 2026-09-25 (M3a final): the single-letter dedupe exemption cost 0.01pp name recall (dedupe gain
+  +1.239 → +1.229pp) and fixed "w w minerals". Still no ⚠ rules. M3a closed.

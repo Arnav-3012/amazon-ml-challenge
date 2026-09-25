@@ -74,3 +74,6 @@ missing. Revision 2 of docs/breakdown.md written from the real numbers.
 - **Next:** M3b blocking v1 on the normalised caches.
 - 2026-09-25 update: noise_ops + normalise + eval ran. 3 rules reverted, 2 fixes, Revision 3 written.
   Remaining for M3a: one confirm rerun (normalise + eval), then commit. Next: M3b blocking.
+- 2026-09-25 M3a DONE: final rerun has no ⚠ rules; "W & W Minerals" → "w w minerals" confirmed. Final
+  either-key recall US 86.61%, India 60.71% (non-ASCII 47.85%); pooled S1 name collision 50.11%
+  (core+legal 40.38%). 6 files normalise in 230s, peak 10.6GB. Next: M3b blocking on artifacts/interim.
