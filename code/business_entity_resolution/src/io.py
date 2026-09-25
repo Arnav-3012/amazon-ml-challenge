@@ -1,5 +1,9 @@
 """TSV I/O for the challenge files. Paths come from configs/config.yaml, resolved against the repo root."""
 import csv
+import json
+import resource
+import sys
+import time
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 
@@ -17,6 +21,30 @@ with open(PKG_DIR / "configs" / "config.yaml") as _f:
 
 def path(key: str) -> Path:
     return ROOT / CFG["paths"][key]
+
+
+def peak_rss_mb() -> float:
+    rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss  # bytes on macOS, KiB on Linux
+    return round(rss / 2**20 if sys.platform == "darwin" else rss / 2**10)
+
+
+class StepLog:
+    """Prints and keeps {step, s since last step, peak RSS MB, **kw}; `dump(p)` writes them as JSON."""
+
+    def __init__(self) -> None:
+        self.rows, self.t0 = [], time.perf_counter()
+        self._last = self.t0
+
+    def __call__(self, step: str, **kw) -> None:
+        now = time.perf_counter()
+        self.rows.append({"step": step, "s": round(now - self._last, 1), "peak_rss_mb": peak_rss_mb(), **kw})
+        self._last = now
+        print(self.rows[-1], flush=True)
+
+    def dump(self, p: Path, **extra) -> None:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps({"total_s": round(time.perf_counter() - self.t0, 1), "peak_rss_mb": peak_rss_mb(),
+                                 **extra, "steps": self.rows}, indent=1))
 
 
 def _read_tsv(p: Path, usecols: list[str] | None = None, nrows: int | None = None) -> pd.DataFrame:
@@ -62,13 +90,15 @@ def load_gt_pairs() -> pl.DataFrame:
             .filter(pl.col("match_id") != ""))
 
 
-def write_candidates(p: Path, cands: pl.LazyFrame, s1_ids: pl.Series) -> None:
-    """candidate_pairs.tsv from the exact (s1_id, rec_id) frame the matcher scores; one row per S1 id."""
+def write_candidates(p: Path, cands: pl.LazyFrame, s1_ids: pl.Series,
+                     list_col: str = "candidate_entity_ids") -> None:
+    """(s1_id, rec_id) pairs -> TSV with one row per S1 id ("" when none): candidate_pairs.tsv from the exact
+    frame the matcher scores, or matching_results.tsv with list_col="matched_entity_ids"."""
     p.parent.mkdir(parents=True, exist_ok=True)
     agg = cands.group_by("s1_id").agg(ids=pl.col("rec_id").unique().sort().str.join(","))
     (pl.LazyFrame({"source1_entity_id": s1_ids})
      .join(agg, left_on="source1_entity_id", right_on="s1_id", how="left", maintain_order="left")
-     .select("source1_entity_id", candidate_entity_ids=pl.col("ids").fill_null(""))
+     .select("source1_entity_id", pl.col("ids").fill_null("").alias(list_col))
      .collect().write_csv(p, separator="\t", quote_style="never"))
 
 

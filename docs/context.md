@@ -71,3 +71,8 @@ Always submit predictions for the full test set. Trust local CV over public-LB p
   CPU-light.
 - AWS ($200 credits, spot) only for parallel sweeps later. See [plan.md](plan.md).
 - 72-hour challenge window: MVP first, stretch after.
+
+## Update (2026-09-25): candidate set size is ranked
+`candidate_pairs.tsv` is part of the final submission. Blocking must scale (no all-pairs comparison) and cut the
+search space to a small candidate set per S1. Organisers review candidate_pairs.tsv and the code producing it; a
+SMALLER candidate set per S1 ranks higher in the final evaluation, beyond the public/private LB score.

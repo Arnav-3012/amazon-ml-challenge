@@ -13,15 +13,13 @@ Run from code/business_entity_resolution/:
 import argparse
 import json
 import re
-import resource
-import sys
 import time
 from dataclasses import dataclass
 
 import polars as pl
 from anyascii import anyascii
 
-from .io import load_source, path
+from .io import load_source, path, peak_rss_mb  # noqa: F401  (peak_rss_mb re-exported for block/normalise_eval)
 
 # Rule names in execution order (see docs/normalise.md). Structural steps (lowercase, punct/whitespace
 # strip, address component parse) always run; everything listed here can be ablated.
@@ -265,11 +263,6 @@ def normalise(df: pl.DataFrame, off: frozenset[str] = frozenset()) -> pl.DataFra
     parts = [_normalise_one(p, LEX.get(c, DEFAULT_LEX), frozenset(off))
              for (c,), p in df.partition_by("country", as_dict=True).items()]
     return pl.concat(parts).sort("_i").drop("_i")
-
-
-def peak_rss_mb() -> float:
-    rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss  # bytes on macOS, KiB on Linux
-    return round(rss / 2**20 if sys.platform == "darwin" else rss / 2**10)
 
 
 def main() -> None:

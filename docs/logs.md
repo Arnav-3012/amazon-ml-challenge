@@ -348,3 +348,28 @@
   PASS (1,732,544 S1 rows, 0 empty candidate lists; matching_results still the M1 all-empty file, not submitted).
   Pending: one `--check-ids` validator run to confirm every candidate ID exists in test S2/S3.
 - 2026-09-25 (M3b close): validator `--check-ids` PASS: every candidate ID exists in test S2/S3 (9,969,589 valid IDs).
+- 2026-09-25 (M4 code, NOT RUN on real data): `src/features.py` (pass 1 per 2M-row chunk: rapidfuzz cpdist name
+  ratio/token_sort/token_set/partial/JW, alias best, IDF Jaccard over name tokens/bigrams/skeletons and address
+  tokens/skeletons via per-country idf_{split}, legal/marker/number/street/has-address codes, blocking scores+ranks,
+  is_s3; pass 2 over the whole split: v − max, rank, margin to best other, per record and per S1, for X/A/B/C
+  scores + name/addr token_set; n_cand per record/S1). `src/train.py` (GroupKFold(5) OOF on the 20% S1 subset,
+  3:1 negatives 50% hardest, early stop on held-out log-loss; `--loco`; `--final` at 50%, mean best iter ×1.1),
+  `src/decide.py` (argmax + global t; vectorised F0.5 asserted equal to metric.macro_f05; splits + LOCO →
+  docs/matcher.md), `src/predict.py` (test → matching_results.tsv with ⊆-candidates asserts). io.py gains `StepLog`,
+  `peak_rss_mb` (moved from normalise.py, re-exported), `write_candidates(list_col=)`. Config: `features`, `matcher`,
+  `decide` blocks; `features_dir` → artifacts/features. Verified on synthetic data only: relative() incl. ties/NaN,
+  idf_jaccard, best_alias, code3, id_key injectivity, f05_vec vs metric.f05 (2,000 random cases), with_top tie-break,
+  sample_rows, prep()+pair_features() on a toy frame. ml-code-sensei fixes: fill_nan in relative(); idf_jaccard join
+  keeps left order (fixed float summation order).
+- 2026-09-25 (M4 loss decomposition, OOF 20% subset, t=0.80, read-only scratch scripts): macro F0.5 0.96544, loss 0.03456
+  = blocking-unreachable 0.01284 (ceiling 0.98716) + matcher 0.02173. Matcher: removing all FP +0.00773, recovering all
+  reachable FN +0.01403. 11.2% of S1 have a reachable FN (57,560 FN pairs, p median 0.46, 94% are their record's argmax);
+  2.8% have an FP; 3.8% of singletons get a prediction (-0.00211). In only 14.6% of error S1s does a negative outrank a
+  positive: mostly a count/threshold problem, not ranking. Decision rules on p alone: relative-to-S1-max rules +0.0000;
+  oracle top-k with k = reachable true count 0.98146 (the count is worth up to ~+0.016, but p does not carry it).
+  Leader LB 0.986955 ≈ our blocking ceiling: both blocking and matcher must improve to pass it.
+- 2026-09-25 (candidate-size measurement, 20% OOF, read-only): all M4 31.3/S1 PC 96.28 ceiling 0.98716 F0.5 0.96544;
+  top-N by X_score: 10 → PC 90.98, F0.5 0.94989; 20 → 92.90, 0.95464; top-N by OOF p: 5 → 0.96138, 8 → 0.96541;
+  OOF p ≥ 0.001 → 4.54/S1, PC 96.275, F0.5 0.96544 (no loss). Organiser rule added to context.md; plan reordered.
+- 2026-09-25 (M4 predict): test 60,901,445 candidates scored; t=0.80 + argmax → 5,677,069 matches, 1,629,468 of
+  1,732,544 test S1 with ≥1 match (5.95% empty; train singleton rate 5.58%). Peak 10.7GB. Pending: validator, LB score.

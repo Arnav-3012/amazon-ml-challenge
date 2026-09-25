@@ -94,3 +94,13 @@ missing. Revision 2 of docs/breakdown.md written from the real numbers.
   (writes output/candidate_pairs.tsv) + validator. Then M4.
 - 2026-09-25 M3b DONE: train candidates = X m5/k10, PC 96.31%, perfect-matcher F0.5 ceiling 0.9873, ~69M pairs.
   Test block run + candidate_pairs.tsv happen at M4 inference. Next: M4 GBM matcher (first real submission).
+
+## M4: Features + LightGBM matcher + first submission (2026-09-25) — CODE WRITTEN, NOT RUN
+**Status:** waiting on the user's runs.
+- Written: `src/features.py`, `src/train.py`, `src/decide.py`, `src/predict.py`; report → `docs/matcher.md`.
+- Features cover ALL candidates of each split (relative features need every competitor); the 20% subset is a row
+  filter in train.py.
+- Gate after decide: OOF macro F0.5 vs the 0.9873 blocking ceiling; LOCO gap; argmax on/off delta.
+- 2026-09-25 update: all M4 runs done. OOF macro F0.5 0.9654 @ t=0.80 (20% subset; blocking ceiling 0.9872);
+  LOCO India −0.13, US −0.02. Final fit 50% subset, 3,433 rounds. Test: 5.68M matches, 5.95% S1 empty.
+  Remaining: validator + first LB submission. Next: cheap candidate pruner (plan.md, organiser size rule).
