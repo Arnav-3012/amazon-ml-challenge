@@ -72,17 +72,35 @@ def sample_rows(idx: np.ndarray, y: np.ndarray, hard: np.ndarray, rng: np.random
     return np.sort(np.concatenate([pos, order[:n_hard], rand]))
 
 
-def params() -> dict:
-    return {**MC["lgb"], "seed": SEED, "metric": "binary_logloss"}
+def params(seed: int | None = None) -> dict:
+    return {**MC["lgb"], "seed": SEED if seed is None else seed, "metric": "binary_logloss"}
 
 
-def fit(X: np.ndarray, y: np.ndarray, feats: list[str], rounds: int, valid: tuple | None = None) -> lgb.Booster:
-    dtr = lgb.Dataset(X, label=y, feature_name=feats, free_raw_data=True)
+def dataset(X: np.ndarray, y: np.ndarray, feats: list[str], weight: np.ndarray | None = None,
+            reference: lgb.Dataset | None = None, seed: int | None = None) -> lgb.Dataset:
+    """Constructed (binned) Dataset. free_raw_data drops LightGBM's reference to X, so the caller can `del X`
+    right after and only the bins stay in memory. Same params as training (binning params are fixed at construct)."""
+    return lgb.Dataset(X, label=y, weight=weight, feature_name=feats, reference=reference, params=params(seed),
+                       free_raw_data=True).construct()
+
+
+def fit_ds(dtr: lgb.Dataset, rounds: int, dva: lgb.Dataset | None = None, seed: int | None = None) -> lgb.Booster:
     kw = {}
-    if valid is not None:
-        kw = {"valid_sets": [lgb.Dataset(valid[0], label=valid[1], reference=dtr)], "valid_names": ["heldout"],
+    if dva is not None:
+        kw = {"valid_sets": [dva], "valid_names": ["heldout"],
               "callbacks": [lgb.early_stopping(MC["early_stopping"], verbose=False), lgb.log_evaluation(100)]}
-    return lgb.train(params(), dtr, rounds, **kw)
+    return lgb.train(params(seed), dtr, rounds, **kw)
+
+
+def fit(X: np.ndarray, y: np.ndarray, feats: list[str], rounds: int, valid: tuple | None = None,
+        weight: np.ndarray | None = None, seed: int | None = None) -> lgb.Booster:
+    """weight: per-row training weight (e.g. inverse sampling probability), None = uniform. The valid set is
+    never weighted -- early stopping and the reported heldout logloss must read as an unweighted, unsampled
+    metric, or the stopping decision itself would be biased by the sampling scheme.
+    seed: LightGBM seed override (bagging/feature_fraction draws); None = config seed."""
+    dtr = dataset(X, y, feats, weight, seed=seed)
+    dva = dataset(valid[0], valid[1], feats, reference=dtr, seed=seed) if valid is not None else None
+    return fit_ds(dtr, rounds, dva, seed)
 
 
 def calibration(y: np.ndarray, p: np.ndarray) -> list[dict]:

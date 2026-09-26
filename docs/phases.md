@@ -104,3 +104,46 @@ missing. Revision 2 of docs/breakdown.md written from the real numbers.
 - 2026-09-25 update: all M4 runs done. OOF macro F0.5 0.9654 @ t=0.80 (20% subset; blocking ceiling 0.9872);
   LOCO India −0.13, US −0.02. Final fit 50% subset, 3,433 rounds. Test: 5.68M matches, 5.95% S1 empty.
   Remaining: validator + first LB submission. Next: cheap candidate pruner (plan.md, organiser size rule).
+- 2026-09-25 M4 DONE: first real submission, public LB 0.957 (OOF 0.9654). Next: cheap candidate pruner (M5a).
+
+## M5-D0: diagnostics (2026-09-25) — DONE
+**Status:** all 7 checks run; results in docs/diagnose_m5.md, summary in logs.md.
+- Next session: breakdown Revision 3 (D0), update the m5-strategy §5 gates, confirm or kill §2, pick the next build.
+- 2026-09-25 update: done. §2 confirmed (breakdown Revision 4), §5 rewritten: M5-1 → M5-2 → M5-3.
+
+## M5-1: blocking v2 (2026-09-25) — CODE WRITTEN, NOT RUN
+**Status:** waiting on the user's runs.
+- Written: `src/gate.py` (pool + pre-score gate, `--split/--eval/--apply`), `block.py` test now writes a grid,
+  `diagnose.py` D0-8. Config `gate:`.
+- Gate: pick m/n/variant from docs/blocking_v2.md: test ≤ ~45 cand/S1, F0.5 ceiling > v1 0.9873.
+
+## M5-2: full-data retrain with S1-dropout (2026-09-25) — CODE WRITTEN, NOT RUN
+**Status:** queued overnight after M5-1 + features + `cv_full --check/--smoke`.
+- Written: `src/cv_full.py`, `predict.py --folds`. Config `cv_full:`.
+- Gate: OOF (b) recovers most of the D0-5 −0.0038; curve slope decides data vs features. M5-3 spec in m5-strategy §5.
+
+**M5-1b/M5-2 status:** files written, nothing run. gate.n=60 decided; sibling.enabled=false pending sweep+eval read. cv_full weighted-CV + --preflight written; --check extended with the synthetic weight-math test. Features-stage sib_* passthrough NOT verified (features.py not read this turn -- confirm ID_COLS/drop-list does not exclude sib_* before relying on it).
+
+**2026-09-26 pre-run audit:** 4 bugs fixed (sibling .get(1), gate all_features call, features.py 2 asserts); v1 backups written. Chain ready: sibling sweep/eval -> gate --apply -> features -> cv_full --check/--preflight/full -> predict --folds -> validator. Reaches M5-2 only; 0.988 needs M5-3 (not coded).
+
+**2026-09-26 mine_dict probe:** src/mine_dict.py written, not run. Decides whether a token dict (cheap) can stand in for / precede the E0 encoder channel on vocab misses.
+
+**2026-09-26 eyeball.py:** first run killed (pred_contrib over 13.8M OOF rows). Fixed + 4 latent bugs (country "US", polars outer_coalesce, section 6 explode/vocab definition). Re-run pending: `python -m src.eyeball`.
+
+**2026-09-26 ab_test scorer fix:** scope was all 5 folds with a fold-0-only model (0.236). Now fold-0 scope + sanity assert + 3-seed noise floor + per-variant timing. Re-run pending: `python -m src.ab_test`.
+
+**2026-09-26 A/B close:** all 4 M5-3 feature groups kept (+all +0.0097). Gate n=60 deferred; channel D, segmentation and generator-inversion dropped. Next: Submit #1 chain, then stage-2 (M5-3).
+
+**2026-09-26 cv_full memory pass:** easy-negative sampling at 0.2 (weighted), Dataset constructed then matrix freed, preflight v2 (5% + 20%, linear fit). Run: `cv_full --check` then `cv_full --preflight`.
+
+**2026-09-26 --check hardening:** weighted-sampling check at 500k rows x 3 sampling seeds (mean rel_diff < 1%).
+
+**2026-09-26 M5-3 stage 2 coded:** `src/stage2.py` (+ `stage2:` config). Run after cv_full + predict --folds: `stage2 --smoke`, `stage2`, then `stage2 --predict` only if the gate passes.
+
+**2026-09-26 stage2 backup:** `--predict` backs up the stage-1 output files to `output/*_stage1.tsv` before overwriting.
+
+**2026-09-26 blocking autopsy coded:** `src/block_autopsy.py` → `docs/block_autopsy.md`. Run: `python -m src.block_autopsy`.
+
+**2026-09-26 M5-2 DONE + Submit #1:** cv_full OOF (b) 0.9746 @ t=0.75 (a: 0.9751); predict --folds -> **LB 0.967** (M4 0.957). OOF->LB gap still -0.008. Backups `output/*_sub1.tsv`.
+
+**2026-09-26 block autopsy DONE:** lexical unions buy <= +0.001 ceiling at +28 cand/S1; 61% of v1 misses are in no channel. Next: stage-2 (M5-3) `stage2 --smoke` -> `stage2`; find the OOF->LB gap (India/France mix); encoder retrieval for the recall ceiling.

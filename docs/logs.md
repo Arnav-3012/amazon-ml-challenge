@@ -373,3 +373,77 @@
   OOF p ≥ 0.001 → 4.54/S1, PC 96.275, F0.5 0.96544 (no loss). Organiser rule added to context.md; plan reordered.
 - 2026-09-25 (M4 predict): test 60,901,445 candidates scored; t=0.80 + argmax → 5,677,069 matches, 1,629,468 of
   1,732,544 test S1 with ≥1 match (5.95% empty; train singleton rate 5.58%). Peak 10.7GB. Pending: validator, LB score.
+- 2026-09-25 21:35 IST (M4 LB): public LB 0.957 vs OOF 0.9654 (−0.008). Test predictions per country: France 259k S1,
+  4.9% empty, 3.46 matches/S1; India 810k, 6.4%, 3.19; US 663k, 5.8%, 3.31 (train truth 5.6%, 3.46). No France collapse.
+  Own inference (unverified): test mix is 47% India vs 40% train (India OOF 0.9515 vs US 0.9747) → mix-weighted OOF
+  ~0.961 if France is average; the remainder implies France ~0.925. India under-predicts (3.19 vs 3.46): FN-driven.
+- 2026-09-25 (M5-D0 code, NOT RUN on real data): `src/diagnose.py` for D0-1..7 of m5-strategy-l3 §3. Found: train.py
+  saves no fold models, and predict.py keeps no test pair p. D0-5 therefore uses models/lgb_final.txt on held-out S1s
+  (outside the final 50%); D0-4 max-p re-scores a 60k-record sample per split with lgb_final (train side = records
+  whose candidate S1s are all held out, compared by n_cand stratum). D0-1 recomputes exact block ranks (all channels,
+  both directions) for every missed pair from idf_train with block.py's functions; asserted against stored X ranks on
+  2k hit pairs/country. D0-5 asserts that the no-drop rebuild reproduces every stored feature. Verified on synthetic data
+  only: true_rank == block.retrieve ranks (20 random cases x 3 chunk budgets, with ties); per_s1 denominators.
+- 2026-09-25 | M5-D0 run 1 aborted in D0-4 (OOM from is_in-in-agg, see decisions_mistakes); D0-1..3 done (D0-1 control asserts 0 mismatches). Fixed; resume with `--d 4 5 6 7`
+- 2026-09-25 | M5-D0 complete (docs/diagnose_m5.md). OOF loss 0.0346 splits: blocking miss 0.0140, FN below t (argmax right) 0.0133, FP 0.0077 (69% on distractor records), argmax conflicts 0.0011. Orphan sim (19% S1 drop): -0.0038, FP 334->634, singletons -0.0194. Test rec/S1 5.5-5.8 vs train 4.68, max p>0.5 test 59.9% vs train reweighted 71.9% -> test has more distractor records (inferred ~40% vs 26%). No id/row-order leak (|rho| <= 0.002)
+- 2026-09-25 | Distractor shift CONFIRMED, breakdown Revision 4 written, m5-strategy-l3 §5 rewritten to M5-1/M5-2/M5-3
+  (docs-only turn, per the session brief). Corrected the density claim: 19% S1 drop -> 4.68/0.81 = 5.78 rec/S1 =
+  test's 5.75 (decisions_mistakes.md MISTAKE entry), not "test is denser than the simulation."
+- 2026-09-25 | M5-1/M5-2 code written, NOT RUN on real data:
+  - `src/gate.py`: pool = block.finalize(grid, m, gate.pool_k, all channels) for m in gate.sweep_m, then a per-S1
+    pre-score gate (max over channels of norm score + n_channels_hit; norm = max(score/S1-best, score/record-best)
+    in that channel) capped at gate.n. `--split` writes the pool (16 S1-hash buckets, one finalize+gate_bucket pass
+    per bucket so all sweep_m share one grid scan); `--eval` -> docs/blocking_v2.md (PC, perfect-matcher F0.5
+    ceiling, train/test cand/S1 per m/variant/n, v1-hits-kept%); `--apply` cuts to config gate.m/n/variant ->
+    candidates_{train,test}.parquet + candidate_pairs.tsv. `block.py` test now writes blockgrid_test (was:
+    candidates_test + candidate_pairs.tsv directly at fixed m/k); its `--refinalize` flag removed (gate.py replaces
+    it). diagnose.py D0-8: the D0-1 largest miss cell (US, no address, ASCII, name_sim>=80) — how many US S1s share
+    the record's/true S1's core_name, run BEFORE `gate --apply` overwrites candidates_train (D0-1 depends on it).
+  - `src/cv_full.py`: GroupKFold(5) on 100% of train S1s (fold = permutation position mod 5, same seed as M4's
+    subset permutation but a different derivation). Per fold, an S1-dropout "world": drop 19% of ALL train S1s
+    (seeded per fold), recompute only the columns that can change when rows disappear (record-centric ranks,
+    features.relative's *_drec/*_rkrec/*_gaprec, n_cand_rec) as memory-mapped .npy overlays on the stored
+    feature parts, read via `Data.gather`/`Data.predict` (part-by-part, no full materialisation). Training rows =
+    other folds minus the dropped S1s, 10% of those held out for early stopping (all their rows), rest sampled by
+    the M4 rule (train.sample_rows, reused). OOF (a) standard = every row scored by its fold's model on stored
+    features; OOF (b) test-density = one more dropout world (different seed) scored the same way, PRIMARY metric.
+    `score()` reimplements decide.py's argmax+threshold rule vectorised over NaN-able p (rows outside a world are
+    NaN) and asserts against `metric.macro_f05` on request. `--check` asserts the no-drop world reproduces every
+    stored record-side feature exactly (all rows, not sampled). `--curve` retrains fold 0 at cv_full.curve_fracs of
+    its training S1s with fixed rounds (fold 0's best iteration), scored on (b) with the other 4 folds' OOF (b) p
+    supplying their competitors. `predict.py --folds`: mean of the 5 fold models, t = OOF (b)'s best t, also saves
+    test p to oof/test_p.parquet (stage-2 input per m5-strategy §5 step 4).
+  - Verified on synthetic data only (scratchpad/t_m5.py, t_data.py, deleted after use): world() rrank-shift/relative/
+    n_cand_rec vs an independent brute force (30 random trials, incl. the no-drop-reproduces-stored case); score()
+    vs a brute-force argmax + metric.macro_f05 (20 trials); gate_bucket()'s pre-score/gr_pre/gr_v1 vs brute force
+    (20 trials, ties and multi-channel nulls included); Data.gather/Data.predict index alignment across parquet
+    part boundaries incl. an empty part (synthetic parquet fixtures). finalize(finalize(g,10,k),5,k) ==
+    finalize(g,5,k) checked on a synthetic grid (justifies building the pool once at max(sweep_m) and re-cutting
+    per m instead of rescanning). None of this touches real data; the D0-8 numbers, blocking_v2.md sweep, and
+    cv_full OOF numbers do not exist until the user runs them.
+
+2026-09-25 | M5-1b/M5-2 memory-guard pass: sibling channel vectorized (rapidfuzz process.cdist), sibling per-pair features (sib_hit/sib_anchor_margin/n_sib_anchors/sib_name_tset) now emitted for ALL v2 pairs not just added ones, gate.py --apply union+dry-estimate+v1-backup-assert+row-set-assert wired (behind gate.sibling.enabled, default false), gate.n 45->60, train.fit() gained an optional weight param (default None, no behavior change for existing callers), cv_full.py gained in_v1 flag / weighted_sample_rows (Bernoulli(ext_neg_rate) on extension-only negatives, composed weight 1/(p_keep_existing*p_keep_ext), valid set unsampled+unweighted) / check_weighted_sampling synthetic 1% test / --preflight (1 fold, 5% S1, RSS+time extrapolation). Nothing run -- files only.
+
+2026-09-26 | Pre-run audit of the M5-1b -> M5-2 command chain. Fixed sibling.py `.get(1)` crash, gate.apply all_features call, features.py two assert bugs (see decisions_mistakes). Made candidates_{train,test}_v1.parquet (cp of current candidates; train 69,043,101 rows / 2,206,821 S1 = 31.29 cand/S1, test 35.15). Checked: pool_{train,test}_m10, blockgrid_{train,test}, predict --folds <-> cv_full.json keys/fold file names. Nothing else run.
+
+2026-09-26 | src/mine_dict.py written (standalone probe, no pipeline change): native-India transliteration map + abbreviation map (first letter + subsequence), keep co>=20 & share>=0.8, mined on 80% S1s, KEY = % of held-out 20% v1 misses (vocab proxy ∪ India-native) sharing a surviving token after the map. D0-1's miss list is not on disk, so misses = true pairs not in candidates_train_v1 and vocab = no shared A/B token with df<=1000 (proxy count printed vs 106,630). Helpers checked on synthetic data only (caught a .drop("k") bug); not run on real data.
+
+2026-09-26 | src/eyeball.py fixes after the first real run (killed after ~1h stuck in pred_contrib, no output). pred_contrib moved from all 13,806,329 OOF rows to section 3's 60 sampled rows (keyed by _oof; stream-filtered feature read); per-step timing prints added. Pre-run schema check found 3 more bugs that would have broken the report: country value is "US" not "United States" (US half of every bucket + all of section 5 empty), `how="outer_coalesce"` (removed in polars 1.44 -> section 6 crash), section 6 select mixed a list.explode with scalar columns (length error) and tagged vocab from S1-side tokens only -- now calls mine_dict.shared (tokens in both sides, df<=cap) directly. Also: balanced_sample tops up either side without duplicates; section 2 GT lookup is one reverse dict. Checked: balanced_sample + shared on toy frames; top3_contrib_for on 5 real FN rows (2.4s, order-independent). Full report not yet re-run.
+
+2026-09-26 | ab_test.py scorer fix (not run). Reported macro_f05 ~0.236 vs OOF 0.965. Cause: Data.predict indexes boosters by fold, so the single fold-0 model only scores fold-0 rows, but score() was scoped to ~dropE over all 5 folds -> ~80% of scored S1s had no p (non-singletons 0, singletons 1): 0.2*0.965 + 0.8*~0.056 ~= 0.238. Fix: scope = fold 0 & ~dropE; prints n scored / n with >=1 candidate / singleton share; SystemExit if baseline outside [0.94, 0.98]. Noise floor: baseline refit at LightGBM seeds 43, 44 on the same rows, std (ddof=1) over 3 -> keep bar max(0.002, 2*std); pairwise unions gated on that bar. Worlds + X/Xv/X_eval built once (all features) and column-sliced per variant (was: 2 worlds + full-part predict per variant). Per-variant wall clock in the table. train.fit gains optional seed= (None = config seed, existing callers unchanged). py_compile OK only.
+
+2026-09-26 | M5 feature A/B done (fixed scorer, seed std ≈0.00007): +a +0.0013, +b +0.0028, +c +0.0050, +d +0.0015, +b+c +0.0071, +all +0.0097 → all 4 groups kept. Gate n=60 deferred for Submit #1 (~2× rows, OOM risk, ~+0.001). Channel D, domain segmentation, generator-inversion dropped. Next: features test → cv_full --preflight → cv_full → predict --folds → validator → Submit #1.
+
+2026-09-26 | cv_full memory-safe full run (not run; py_compile only). Sampler: all positives + sample_rows' hardest-first negatives (weight 1) + other negatives Bernoulli(easy_neg_rate 0.2 x ext_neg_rate if not in_v1), weight 1/keep-prob (replaces the 3:1 uniform draw; ab_test shares it). train.py: dataset() builds + constructs with training params (free_raw_data), fit_ds() trains on Datasets, fit() = both (callers unchanged); params(seed). cv_full.fold_datasets: gather X -> construct -> del, then Xv the same, so one float32 matrix + bins alive at a time. OOF/test-density predict already part-by-part (unchanged). Preflight v2: --preflight runs --preflight-point per preflight_fracs [0.05, 0.2] in fresh subprocesses (clean peak RSS), linear fit a + b*frac for RSS, time, s/round, train rows -> frac 1 x n_folds. Old x20 single-point extrapolation removed (fixed overhead dominates at 5%).
+
+2026-09-26 | check_weighted_sampling: synthetic training pool 55k -> 500k (same generator/seed, 5k valid), rel_diff averaged over sampling seeds 42/43/44 (full fit once), max weight printed; 1% bar kept on the mean; failure message says bias -> do not run cv_full. py_compile only.
+
+2026-09-26 | M5-3 stage2.py written (import check only, not run). Rows = OOF (b) (p_td not null); features: p, record rank / p − other max / top1−top2 / #S1s, S1 rank / Σp / #>0.5 / #cands / p÷max, coref_name/addr (# other records of the S1 with p>0.8, top 5, token_set ≥ 90 to this record), + top-10 stage-1 features by fold gain excluding REC_COLS (stored values are the no-drop world, not (b)). Same S1 folds, inner 10% early stopping, weighted_sample_rows with hardness = stage-1 p. Variants full + rank_only (drops p, rec_dmax, rec_gap, s1_psum, s1_n05). Asserts stage-1 (b) rescored = cv_full.json. --predict refuses unless gain ≥ 0.002; reports p-shift OOF (b) vs test. Deviation from spec: user's coref counts replace the spec's p·sim sibling max / best-sibling-address.
+
+2026-09-26 | stage2 --predict: before writing matching_results.tsv, backup_stage1() copies matching_results.tsv and candidate_pairs.tsv to output/*_stage1.tsv once (an existing backup is never replaced; asserts the source exists). Rule: never overwrite a submission file without a backup. Import check only.
+
+2026-09-26 | block_autopsy.py written (py_compile only, not run). 10% train S1s (hash seed 42 % 10). Q1: missed true pairs vs v1 (candidates_train_v1.parquet) with per-channel rrank/srank buckets from blockgrid_train, record has zero v1 rows, addr_tset (token_set_ratio of joined addr_tokens) ≥ 90, exact core-name equality, 15 examples. Q2 from code: v1 = X rrank ≤ 5 OR X srank ≤ 10 (gate.py:35) = union of both directions, not AND; script also reports the share of v1 rows matching X-only vs any-channel rule. Q3: PC / gate.ceiling / cand/S1 for (a) v1, (b) ∪ any-channel rrank ≤ m (1,2,3,5), (c) ∪ exact name key within country (keys with > 20 train S1s skipped), (d) ∪ B rrank ≤ 3 with addr_tset ≥ 90; (c)/(d) reported for every m. Names/addrs are joined normalised tokens, not features.py strings.
+
+2026-09-26 | M5-2 RUN + Submit #1 (numbers from oof/cv_full.json, oof/predict_timing_folds.json). cv_full: 5 folds on 100% train S1s (2,206,821 S1, 69.0M rows on v1 candidates, gate n=60 deferred), ~16.6M train rows/fold, best_iter 3530-4136, valid logloss ~0.0075. OOF (a) standard 0.97515 @ t=0.73 (India 0.9660, US 0.9813); OOF (b) test-density 0.97459 @ t=0.75 (India 0.9653, US 0.9808, 28,249 FP pairs). vs M4 20% subset OOF 0.9654: +0.0092. predict --folds: 60.9M test candidates, 5-fold mean p, t=0.75 -> 5,688,845 matches, 3.28/S1, 5.96% empty (M4: 5.95%); 10,222 s, peak 7.6GB. Backups: output/{matching_results,candidate_pairs}_sub1.tsv. **Public LB 0.967** (M4 0.957, +0.010). OOF(b)->LB gap -0.0076, the same as M4's -0.008: the S1-dropout world did NOT close it, so the gap is not distractor density alone (candidates: India share 47% vs 40%, France unseen).
+
+2026-09-26 | block_autopsy RUN (docs/block_autopsy.md, 10% train S1s, 764,165 true pairs, peak 9.0GB). v1 misses 28,260 (3.70%); 61.4% of misses are absent from the whole grid (no channel, no direction), and only 5.7% sit at any-channel record rank <= 5. Unions without the GBM: best (c)/(d) m=5 -> ceiling 0.9881 (+0.0010) for +28 cand/S1; m=1 -> +0.0005 for +3.7/S1. 63.6% of misses have equal core name OR addr_tset >= 90, yet the lexical channels do not rank them -> the next recall source is a new signal (encoder E0 / cross-script), not a deeper lexical grid.

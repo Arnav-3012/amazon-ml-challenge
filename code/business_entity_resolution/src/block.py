@@ -17,15 +17,16 @@ Scores are sparse products (records x vocab) @ (vocab x S1), chunked by an exact
 nnz (row cost = sum of the actual posting lengths). No S1 x S2 matrix is ever held. Work runs per
 country x per source, and one split per process.
 
-Train keeps ranks up to max(sweep_m) / max(sweep_k) in blockgrid_train_cap{cap}.parquet. candidates_{split}
-is that grid cut to config m/k (identical to a direct m/k run: ranks are intrinsic to each direction).
+Both splits write a rank grid blockgrid_{split}_cap{cap}.parquet: train keeps ranks up to max(sweep_m) /
+max(sweep_k), test up to max(gate.sweep_m) / gate.pool_k. src.gate cuts either grid to the same m/k (identical
+to a direct m/k run: ranks are intrinsic to each direction) and writes candidates_{split} + candidate_pairs.tsv.
 
 Run from code/business_entity_resolution/:
   python -m src.block --selftest                     # synthetic: sparse pipeline == pure-Python brute force
   python -m src.block --split train --dry            # df + survivor pass: zero-token %, product nnz bound
   python -m src.block --split train --smoke 300000   # first N rows per file; *_smoke outputs; prints nnz/s
-  python -m src.block --split train                  # candidates_train + blockgrid_train_cap1000 + idf_train
-  python -m src.block --split test                   # candidates_test + output/candidate_pairs.tsv
+  python -m src.block --split train                  # blockgrid_train_cap1000 + idf_train
+  python -m src.block --split test                   # blockgrid_test_cap1000 + idf_test
 """
 import argparse
 import json
@@ -36,7 +37,7 @@ import numpy as np
 import polars as pl
 import scipy.sparse as sp
 
-from .io import CFG, path, write_candidates
+from .io import CFG, path
 from .normalise import peak_rss_mb
 from .phonetic import add_skeletons
 
@@ -254,24 +255,14 @@ def main() -> None:
     ap.add_argument("--smoke", type=int, default=0, help="first N rows of each file; outputs get _smoke")
     ap.add_argument("--dry", action="store_true", help="df + survivor pass: zero-token %%, product nnz bound")
     ap.add_argument("--selftest", action="store_true", help="synthetic brute-force equivalence check")
-    ap.add_argument("--refinalize", action="store_true",
-                    help="train only: re-cut the existing blockgrid to config m/k/select -> candidates_train (seconds)")
     a = ap.parse_args()
     if a.selftest:
         return _selftest()
     assert a.split, "--split is required"
-    if a.refinalize:
-        assert a.split == "train", "--refinalize needs the train grid"
-        out = path("interim_dir")
-        finalize(pl.scan_parquet(out / f"blockgrid_train_cap{a.df_cap}.parquet"), BCFG["m"], BCFG["k"],
-                 tuple(BCFG["select"])).sink_parquet(out / "candidates_train.parquet")
-        n = pl.scan_parquet(out / "candidates_train.parquet").select(pl.len()).collect().item()
-        print(f"candidates_train: {n:,} pairs (m={BCFG['m']}, k={BCFG['k']}, select={BCFG['select']})")
-        return
     split, cap, budget = a.split, a.df_cap, float(BCFG["nnz_budget"])
-    train, main_cap = split == "train", a.df_cap == BCFG["df_cap"]
-    m_max = max(BCFG["sweep_m"]) if train else BCFG["m"]
-    k_max = max(BCFG["sweep_k"]) if train else BCFG["k"]
+    train = split == "train"
+    m_max = max(BCFG["sweep_m"]) if train else max(CFG["gate"]["sweep_m"])
+    k_max = max(BCFG["sweep_k"]) if train else CFG["gate"]["pool_k"]
     sfx = "_smoke" if a.smoke else ""
     out = path("interim_dir")
     parts = out / f"_parts_{split}_cap{cap}{sfx}"
@@ -351,15 +342,7 @@ def main() -> None:
         with pl.Config(tbl_rows=-1, tbl_cols=-1, fmt_str_lengths=60, tbl_width_chars=250):
             print(pl.DataFrame(surv).drop("top_cost_tokens"))
     else:
-        lf = pl.scan_parquet(parts / "*.parquet")
-        if train:
-            lf.sink_parquet(out / f"blockgrid_{split}_cap{cap}{sfx}.parquet")
-        if main_cap:
-            cands = out / f"candidates_{split}{sfx}.parquet"
-            finalize(lf, BCFG["m"], BCFG["k"], tuple(BCFG["select"])).sink_parquet(cands)
-            if split == "test" and not a.smoke:
-                s1_ids = pl.read_parquet(norm_path(split, 1), columns=["entity_id"])["entity_id"]
-                write_candidates(path("candidate_pairs"), pl.scan_parquet(cands).select("s1_id", "rec_id"), s1_ids)
+        pl.scan_parquet(parts / "*.parquet").sink_parquet(out / f"blockgrid_{split}_cap{cap}{sfx}.parquet")
         log("sink outputs")
     shutil.rmtree(parts)
     total = {"split": split, "df_cap": cap, "m_max": m_max, "k_max": k_max, "bigrams": BCFG["bigrams"],

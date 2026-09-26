@@ -43,8 +43,22 @@ Format: `path | purpose | what to check when something related breaks`. Update t
 - `code/business_entity_resolution/src/block_eval.py` | M3b eval → `docs/blocking.md` (phonetic check, PC by segment × channel, budget curve, volume/RR, runtime, missed pairs by cause) | cap rows missing → run `src.block --df-cap N`
 - `docs/blocking.md` | blocking evaluation tables (generated) | stale → rerun block then block_eval
 - `artifacts/interim/idf_{split}.parquet` | per country × channel token df per source (n1,n2,n3; df≥2) + n_country; reusable for M4 IDF features | IDF looks off → doc_freq() in block.py
-- `artifacts/interim/candidates_{split}.parquet` | THE candidate set M4 scores: s1_id, rec_id, {A,B,C}_{score,rrank,srank}, n_channels_hit | must equal candidate_pairs.tsv (test)
-- `artifacts/interim/blockgrid_train_cap{cap}.parquet` + `block_timing_{split}_cap{cap}.json` | train superset at m≤10/k≤60 for the budget curve; per-step time/peak RSS/nnz | budget curve only; never scored
+- `artifacts/interim/candidates_{split}.parquet` | THE candidate set the matcher scores: s1_id, rec_id, {A,B,C,X}_{score,rrank,srank}, n_channels_hit. Since M5-1 written only by `src.gate --apply` | must equal candidate_pairs.tsv (test); v1 backups `candidates_{split}_v1.parquet`
+- `artifacts/interim/blockgrid_{split}_cap{cap}.parquet` + `block_timing_{split}_cap{cap}.json` | rank grid: train m≤10/k≤60, test max(gate.sweep_m)/gate.pool_k (M5-1); per-step time/peak RSS/nnz | gate input; never scored directly
+- `code/business_entity_resolution/src/gate.py` | M5-1 blocking v2: pool (all channels, m / pool_k) gated per S1 by pre-score; `--split`, `--eval`, `--apply` | cand/S1 too high on test → gate.n; PC drop vs v1 → variant v1
+- `artifacts/interim/pool_{split}_m{m}/part-*.parquet` | gated pool rows (rank ≤ max sweep_n) + pre, gr_pre, gr_v1, n_pool | stale → rerun `src.gate --split`
+- `docs/blocking_v2.md` | M5-1 sweep: PC, F0.5 ceiling, train/test cand/S1 per (m, variant, n) (generated) | stale → rerun `src.gate --eval`
+- `code/business_entity_resolution/src/block_autopsy.py` | M5 blocking autopsy on 10% train S1s: why v1 misses true pairs (per-channel record/S1 ranks, zero-v1 records, addr_tset, name equality) + unions without the GBM (v1, + rec top-m, + name key, + addr top-3 tset≥90) | RSS > 6GB → lower FRAC; v1 rule share ≠ 100% → v1 file ≠ gate V1
+- `docs/block_autopsy.md` | output of src.block_autopsy (generated) | stale → rerun `python -m src.block_autopsy`
+- `code/business_entity_resolution/src/ab_test.py` | M5-3 feature-group A/B gate: 5% S1, fold 0, test-density world; baseline/+a..+d/+all/pairwise unions; keep bar max(0.002, 2×seed std) | baseline outside [0.94, 0.98] → STOP (scope/scorer wrong)
+- `code/business_entity_resolution/src/cv_full.py` | M5-2 full-data GroupKFold(5) with S1-dropout worlds; `--check`, `--smoke`, `--curve`, `--preflight` (5%+20% points, linear fit to 100%) | world mismatch → `--check`; OOM → `cv_full.max_rss_mb` guard stops it
+- `artifacts/features/_worlds*/` | temporary record-side feature columns (.npy) of a dropout world; deleted after use | leftover dir = run died mid-fold
+- `models/fold_{k}.txt` | M5-2 stage-1 fold boosters (saved at best iteration) | predict --folds averages them
+- `code/business_entity_resolution/src/stage2.py` | M5-3 stacked GBM on stage-1 OOF (b) p + neighbourhood/coref features; `--smoke`, `--predict [--variant]` | stage-1 rescore assert fails → OOF/s1_table mismatch; gate refuses → ship stage 1
+- `oof/oof_stage2.parquet`, `oof/stage2.json`, `oof/test_p2.parquet`, `models/stage2_{variant}_fold_{k}.txt` | M5-3 OOF p2 per variant, scores + gain + keep + p_shift, test stage-2 p | compare p_shift oof_b vs test
+- `oof/oof_full.parquet`, `oof/cv_full.json`, `oof/curve.json`, `oof/cv_full_timing_*.json` | M5-2 OOF (_i, s1k, reck, label, fold, p_std, p_td), (a)/(b) scores + best t, learning curve | (b) is the primary metric; `_i` = row of features/train
+- `oof/test_p.parquet` | test stage-1 p (mean of fold models), written by `predict --folds` | stage-2 input
+- `output/{matching_results,candidate_pairs}_sub1.tsv` | manual backup of Submit #1 (M5-2 stage-1, LB 0.967); gitignored | restore by copying over the unsuffixed files
 - `problem-breakdowns/` | problem-judgement brainstorm files (plain text) | design doubt → the matching .txt
 - `code/business_entity_resolution/src/block_diag.py` | M3b quick diagnosis (minutes): PC by country × source × native, grid ceiling, m×k budget curve, rank histogram of true S1 | prints only; use before the slow block_eval
 - `code/business_entity_resolution/src/features.py` | M4 pair features for ALL candidates of a split: pass 1 (chunks) name/address/legal/blocking, pass 2 relative-to-competitor features over the whole split | skew → both splits run this code; NaN vs null in pass 2 (`relative()` fills both); `--smoke N` first
@@ -53,5 +67,11 @@ Format: `path | purpose | what to check when something related breaks`. Update t
 - `oof/` files: `oof_train.parquet`, `cv_metrics.json`, `loco_train.parquet`, `decide.json`, `*timing*.json` | OOF p, CV metrics + mean best iter, LOCO p, chosen t | stale t → rerun decide after train
 - `models/lgb_final.txt` + `lgb_final.json` | final booster + feature list/rounds | predict asserts test features == this list
 - `code/business_entity_resolution/src/decide.py` | M4 decision: per-record argmax + global t on OOF → `oof/decide.json`, `docs/matcher.md` | curve vs exact metric mismatch → assert fires
-- `code/business_entity_resolution/src/predict.py` | M4 inference → `output/matching_results.tsv`; asserts scored = candidates, matches ⊆ candidates, record → ≤1 S1 | row-count assert → test features stale
+- `code/business_entity_resolution/src/predict.py` | inference → `output/matching_results.tsv` (M4: lgb_final + decide.json t; `--folds`: mean of fold models + cv_full (b) t); asserts scored = candidates, matches ⊆ candidates, record → ≤1 S1 | row-count assert → test features stale
 - `docs/matcher.md` | matcher evaluation (generated by decide.py) | stale → rerun train, train --loco, decide
+- `code/business_entity_resolution/src/diagnose.py` | M5-D0 diagnostics D0-1..8 (read-only; imports block/features/decide functions, never copies them); `--d N ...` runs a subset | a section looks stale → `artifacts/diagnose/d{n}.md` is rewritten per check, the report is re-assembled every run
+- `artifacts/diagnose/d{n}.md` | one section per D0 check | missing section → that check has not run yet
+- `docs/diagnose_m5.md` | D0 report (generated, numbers only) | stale → rerun `python -m src.diagnose --d N`
+- `code/business_entity_resolution/src/mine_dict.py` | standalone token-dictionary probe (India native transliteration + abbreviations), mined on 80% of train S1s, evaluated on the held-out 20%'s v1 misses; no pipeline change | KEY % in docs/mine_dict.md; needs candidates_train_v1.parquet + idf_train
+- `docs/mine_dict.md`, `artifacts/interim/token_dict.parquet` | mine_dict report / mappings (field, kind, s, t, co, n_src, share) | stale → rerun `python -m src.mine_dict`
+- `artifacts/logs/` | tee'd long-run logs + `diagnose_timing.json` | job died → tail the .log

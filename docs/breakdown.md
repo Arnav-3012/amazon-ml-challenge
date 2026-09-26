@@ -347,3 +347,30 @@ Corrections to Revision 2, caught before M3 build:
 - **Recall proxy after v1** (name OR addr exact): US 86.5%, India 60.4% (non-ASCII India 47.6%: the
   transliteration gap is the main India recall problem for blocking; char n-grams, not exact keys).
 - Reverted rules: country_marker, amp_and, landmark (decisions_mistakes.md).
+
+## Revision 4 (D0 diagnostics, `docs/diagnose_m5.md`, 2026-09-25)
+(Named "Revision 3 (D0)" in the session request; numbered 4 because Revision 3 is the M3a normaliser.)
+- **Distractor shift CONFIRMED (D0-4 + D0-5).** Test has 5.53-5.82 S2/S3 records per S1 vs train 4.68, while
+  predicted matches per S1 on test (3.19-3.46) sit at the train level (truth 3.46, OOF 3.15-3.29): the extra test
+  records are distractors, not higher cardinality. Share of records with max p > 0.5: test 59.9% vs train 71.9%
+  (reweighted to the test n_cand mix).
+- **The 19% S1-drop simulation reproduces test density exactly:** 4.68 / 0.81 = **5.78 records per S1** vs test
+  5.75. (Corrects an earlier claim that test is denser than the simulation; see decisions_mistakes.md.)
+  D0-5 at that density: macro F0.5 −0.0038, FP 334 → 634 (253 of the new FPs are on orphan records), singletons −0.0194.
+- **OOF→LB gap (0.0084) ≈ 0.0038 orphans + 0.0015 country mix + ~0.003 unexplained** (France, public subset,
+  the 50%-subset final fit).
+- **Threshold tuning is dead:** the best t under dropout gains only +0.0002 over t = 0.80. The fix is in training
+  (S1-dropout augmentation), not in the threshold.
+- **Assignment constraint deprioritised:** argmax conflicts (D0-2 bucket b) are worth 0.0011 in total.
+- **Expected-F0.5 demoted to last, not cut:** it is kept only for the singleton empty-set option.
+- Where the OOF loss (0.0346) sits: blocking misses 0.0140; FN below t with the argmax on the true S1 0.0133
+  (a count/threshold problem, p spread 0-0.8); FP 0.0077, 69% of them on distractor records; conflicts 0.0011.
+- **Blocking misses (281,532 = 3.69% of true pairs):** 62% are depth misses (true S1 at rank ≤ 200 in some
+  channel), 38% vocabulary misses (no shared surviving token), 0.4% are ranked beyond 200. **31.1k (11%) are
+  already kept by A, B or C at config m/k, but `select=[X]` drops them.** 20% sit at rank 1-10 and 21% at rank
+  11-30 in some channel. Biggest cell: US, no address, name_sim ≥ 80 = 17.4% of misses.
+- No id or row-order leak (|rho| ≤ 0.002).
+- **Consequences** (build order in m5-strategy-l3.md §5): (1) blocking v2 = union of A/B/C + more depth behind a
+  cheap per-S1 pre-score gate; (2) one full-data retrain with S1-dropout, evaluated on "test-density OOF" (the
+  primary metric from now on); (3) a stage-2 stacked model with per-S1 and sibling context. The vocabulary misses
+  wait for the encoder E0 go/no-go.

@@ -18,6 +18,38 @@ blocking:
   nnz_budget: 40000000  # max upper-bound nnz of one sparse product chunk (memory knob, not a result knob)
   s1_range: 100000      # S1 rows per merge slice
 
+gate:                   # M5-1 blocking v2 (src.gate). m/k/select above stay the v1 definition (variant "v1")
+  pool_k: 30            # pool = all channels, record-centric top-m U S1-centric top-pool_k; test grid is built at
+                        # max(sweep_m) / pool_k, train reads blockgrid_train (m<=10, k<=60)
+  sweep_m: [5, 10]
+  sweep_n: [30, 35, 40, 45, 50, 60]
+  buckets: 16           # S1 hash buckets per pass (memory knob, not a result knob)
+  m: 10                 # CHOSEN after `src.gate --eval` (docs/blocking_v2.md); must be in sweep_m
+  n: 60                 # per-S1 cap; must be <= max(sweep_n). Decided (docs/decisions_mistakes.md); n>60 gated on --preflight RSS
+  sibling:
+    enabled: false      # flip after reading docs/blocking_v2.md §sibling
+    delta: null         # sib_margin to union at --apply time, once enabled
+  variant: v1           # pre = order by pre-score; v1 = v1 set first, then pre-score
+  sib_margin: [0.05, 0.1, 0.2]  # M5-1b src.sibling: anchor top1-top2 pre-score margin sweep (docs/blocking_v2.md §sibling)
+
+cv_full:                # M5-2 (src.cv_full)
+  drop_frac: 0.19       # S1-dropout: train 4.68 S2/S3 records per S1 / 0.81 = 5.78 = test density (5.75)
+  inner_valid_frac: 0.1 # share of a fold's training S1s held out for early stopping
+  curve_fracs: [0.2, 0.5]
+  max_rss_mb: 20000     # stop if the process peak RSS passes this
+  ext_neg_rate: 0.25    # Bernoulli keep-rate for extension-only (not in_v1) sampled negatives; weight = 1/(rate product)
+  easy_neg_rate: 0.2    # Bernoulli keep-rate for non-hard negatives in fold training (weight 1/rate, x ext); hard = sample_rows' hardest-first set
+  preflight_fracs: [0.05, 0.2]  # --preflight: one fold-0 point per S1 fraction, linear fit -> 100%
+  preflight_rounds: 50  # fixed LightGBM rounds per preflight point
+
+stage2:                 # M5-3 (src.stage2): stacked GBM on stage-1 OOF (b) p
+  n_carry: 10           # strongest stage-1 features by summed fold gain (record-side REC_COLS excluded)
+  coref_p: 0.8          # anchor = another record of the S1 with stage-1 p above this
+  coref_sim: 90         # anchor supports the row when name_tset (or addr_tset) to it >= this
+  max_anchors: 5        # top anchors by p per S1 (bounds record x record comparisons)
+  pair_chunk: 5000000   # anchor pairs per token_set pass (memory knob)
+  keep_gain: 0.002      # ship only if stage-2 OOF (b) >= stage-1 OOF (b) + this
+
 features:
   chunk_rows: 2000000   # candidate pairs per pass-1 part (memory knob, not a result knob)
 

@@ -42,6 +42,7 @@ from .io import CFG, StepLog, path
 from .phonetic import add_skeletons
 
 ID_COLS = ["s1_id", "rec_id"]
+SIB_COLS = ["sib_hit", "sib_anchor_margin", "n_sib_anchors", "sib_name_tset"]  # from gate.py --apply, sibling.enabled only
 KEY_COLS = ["s1k", "reck"]  # int64 forms of the ids, pass 2 only; not written to the final parts
 FIELDS = {  # IDF-Jaccard field -> (token column, idf channel, token prefix in that channel)
     "name": ("name_tokens", "A", ""),
@@ -96,9 +97,10 @@ def prep(df: pl.DataFrame, voc: dict[str, pl.DataFrame], lnn: pl.DataFrame) -> p
     df = add_skeletons(df).with_columns(_bg=_bigrams(df["name_tokens"]))
     toks = {f: map_tokens(df, col, voc[ch], lnn, pre) for f, (col, ch, pre) in FIELDS.items()}
     return df.select(
-        "entity_id", core="core_name", legal="legal_form", aliases="aliases",
+        "entity_id", "country", core="core_name", legal="legal_form", aliases="aliases",
         addr=pl.col("addr_tokens").list.join(" "), num="addr_number", street="addr_street_core",
         has_addr="has_address", nonascii="is_nonascii_raw", marker=pl.col("business_name").str.contains(MARKER_RE),
+        name_toks="name_tokens", addr_toks="addr_tokens",
     ).with_columns(*(s for f, t in toks.items() for s in (t["t"].alias(f"t_{f}"), t["W"].alias(f"W_{f}"))))
 
 
@@ -139,7 +141,126 @@ def code3(x: pl.Series, y: pl.Series) -> np.ndarray:
     return np.select([ex & ey, ex | ey, (x == y).to_numpy()], [0, 1, 2], 3).astype(np.int8)
 
 
-def pair_features(c: pl.DataFrame, s1: pl.DataFrame, rec: pl.DataFrame, w: np.ndarray) -> pl.DataFrame:
+def s1_name_dup(s1: pl.DataFrame) -> pl.DataFrame:
+    """entity_id -> count of OTHER S1 rows, same country, identical normalized core_name (self excluded)."""
+    n = s1.select("entity_id", "country", "core").with_columns(
+        dup=pl.len().over("country", "core").cast(pl.Int32) - 1)
+    assert (n["dup"] >= 0).all(), "s1_name_dup: self-count underflow"
+    return n.select("entity_id", "dup")
+
+
+NUM_RE = r"\d+[A-Za-z]?"
+
+
+def _num_toks(s: pl.Series) -> pl.Series:
+    return s.str.extract_all(NUM_RE)
+
+
+def _lev(a: str, b: str) -> int:
+    from rapidfuzz.distance import Levenshtein
+    return Levenshtein.distance(a, b)
+
+
+def num_rel(a_core: pl.Series, b_core: pl.Series, a_addr: pl.Series, b_addr: pl.Series) -> dict[str, np.ndarray]:
+    """All \\d+[A-Za-z]? tokens from name+address both sides; align by min edit distance, classify best pair.
+    # lean: row-by-row Python double loop over token pairs - fine for the 5% A/B, vectorize (e.g. rapidfuzz
+    # cdist per row-batch or a numpy-only token-pair scan) before running on the full candidate set if kept."""
+    xa = (a_core + " " + a_addr)
+    xb = (b_core + " " + b_addr)
+    ta, tb = _num_toks(xa).to_list(), _num_toks(xb).to_list()
+    n = len(ta)
+    cls = np.zeros(n, np.int8)  # 0 missing_both,1 missing_one_side,2 equal,3 zero_pad,4 prefix_trunc,
+    # 5 suffix_trunc,6 transposed_digits,7 off_by_small,8 different
+    absd = np.full(n, np.nan, np.float32)
+    reld = np.full(n, np.nan, np.float32)
+    for i in range(n):
+        A, B = ta[i], tb[i]
+        if not A and not B:
+            cls[i] = 0
+            continue
+        if not A or not B:
+            cls[i] = 1
+            continue
+        best_d, bp, bq = None, A[0], B[0]
+        for p in A:
+            for q in B:
+                d = _lev(p, q)
+                if best_d is None or d < best_d:
+                    best_d, bp, bq = d, p, q
+        if bp == bq:
+            cls[i] = 2
+        elif bp.lstrip("0") == bq.lstrip("0") and bp.lstrip("0") != "":
+            cls[i] = 3
+        elif bp.startswith(bq) or bq.startswith(bp):
+            cls[i] = 4
+        elif bp.endswith(bq) or bq.endswith(bp):
+            cls[i] = 5
+        elif sorted(bp) == sorted(bq) and bp != bq:
+            cls[i] = 6
+        else:
+            try:
+                d = abs(int("".join(ch for ch in bp if ch.isdigit())) - int("".join(ch for ch in bq if ch.isdigit())))
+                cls[i] = 7 if 1 <= d <= 3 else 8
+            except ValueError:
+                cls[i] = 8
+        try:
+            na, nb = float("".join(ch for ch in bp if ch.isdigit()) or 0), float("".join(ch for ch in bq if ch.isdigit()) or 0)
+            absd[i] = abs(na - nb)
+            reld[i] = absd[i] / max(na, nb, 1.0)
+        except ValueError:
+            pass
+    return {"num_rel_class": cls, "num_rel_absdiff": absd, "num_rel_reldiff": reld}
+
+
+def unmatched_tokens(a_name: pl.Series, b_name: pl.Series, a_addr: pl.Series, b_addr: pl.Series,
+                     country: pl.Series, idf_lookup: dict) -> dict[str, np.ndarray]:
+    """Tokens (name+addr, lowercased, channel A/B matching = exact-token set difference) on either side not
+    present on the other side. Counts per side, max log-IDF (idf_lookup[(country, tok)], global vocab, 0.0
+    for tokens absent from the df table) of the unmatched tokens, and best rapidfuzz.ratio between the two
+    unmatched-token sets joined as strings."""
+    ta = (a_name.list.concat(a_addr)).list.eval(pl.element().str.to_lowercase()).list.unique()
+    tb = (b_name.list.concat(b_addr)).list.eval(pl.element().str.to_lowercase()).list.unique()
+    ta_l, tb_l, ctry = ta.to_list(), tb.to_list(), country.to_list()
+    unmatched_a = [sorted(set(x) - set(y)) for x, y in zip(ta_l, tb_l)]
+    unmatched_b = [sorted(set(y) - set(x)) for x, y in zip(ta_l, tb_l)]
+    cnt_a = np.array([len(r) for r in unmatched_a], np.int16)
+    cnt_b = np.array([len(r) for r in unmatched_b], np.int16)
+    max_idf_a = np.array([max((idf_lookup.get((co, t), 0.0) for t in row), default=0.0)
+                          for row, co in zip(unmatched_a, ctry)], np.float32)
+    max_idf_b = np.array([max((idf_lookup.get((co, t), 0.0) for t in row), default=0.0)
+                          for row, co in zip(unmatched_b, ctry)], np.float32)
+    sa = [" ".join(row) for row in unmatched_a]
+    sb = [" ".join(row) for row in unmatched_b]
+    best_sim = _cp(sa, sb, fuzz.ratio)
+    return {"unmatched_cnt_a": cnt_a, "unmatched_cnt_b": cnt_b,
+            "unmatched_max_idf_a": max_idf_a, "unmatched_max_idf_b": max_idf_b,
+            "unmatched_char_sim": best_sim}
+
+
+def name_tset_dict(a_core: pl.Series, b_core: pl.Series, dict_map: dict | None) -> np.ndarray:
+    """name_tset recomputed after remapping tokens via token_dict.parquet (field='name'); -1 sentinel if the
+    parquet doesn't exist (M5 dict not yet mined)."""
+    n = a_core.len()
+    if dict_map is None:
+        return np.full(n, -1.0, np.float32)
+    def remap(s: str) -> str:
+        return " ".join(dict_map.get(t, t) for t in s.split())
+    ra = [remap(x) for x in a_core.to_list()]
+    rb = [remap(x) for x in b_core.to_list()]
+    return _cp(ra, rb, fuzz.token_set_ratio)
+
+
+def load_token_dict() -> dict | None:
+    """{src_token: tgt_token} for field == 'name', or None if artifacts/interim/token_dict.parquet is absent."""
+    p = path("interim_dir") / "token_dict.parquet"
+    if not p.exists():
+        return None
+    d = pl.read_parquet(p).filter(pl.col("field") == "name")
+    return dict(zip(d["s"].to_list(), d["t"].to_list()))
+
+
+def pair_features(c: pl.DataFrame, s1: pl.DataFrame, rec: pl.DataFrame, w: np.ndarray,
+                  idf_lookup: dict, dict_map: dict | None) -> pl.DataFrame:
     a = c.select("s1_id").join(s1, left_on="s1_id", right_on="entity_id", how="left", maintain_order="left")
     b = c.select("rec_id").join(rec, left_on="rec_id", right_on="entity_id", how="left", maintain_order="left")
     assert a["core"].null_count() == 0 and b["core"].null_count() == 0, "candidate id missing from norm cache"
@@ -160,12 +281,19 @@ def pair_features(c: pl.DataFrame, s1: pl.DataFrame, rec: pl.DataFrame, w: np.nd
         "num_code": code3(a["num"], b["num"]),
         "street_eq": np.where(((a["street"] == "") | (b["street"] == "")).to_numpy(), np.nan, s_eq).astype(np.float32),
         "has_addr_code": (a["has_addr"].cast(pl.Int8) + b["has_addr"].cast(pl.Int8)).to_numpy(),
+        "rec_no_addr": (~b["has_addr"]).cast(pl.Int8).to_numpy(),
         "is_s3": c["rec_id"].str.starts_with("S3").cast(pl.Int8).to_numpy(),
     }
     for k in FIELDS:
         f[f"{k}_idfj"] = idf_jaccard(a[f"t_{k}"], b[f"t_{k}"], a[f"W_{k}"], b[f"W_{k}"], w)
+    f["s1_name_dup"] = a["dup"].to_numpy()
+    f.update(num_rel(a["core"], b["core"], a["addr"], b["addr"]))
+    f.update(unmatched_tokens(a["name_toks"], b["name_toks"], a["addr_toks"], b["addr_toks"],
+                              a["country"], idf_lookup))
+    f["name_tset_dict"] = name_tset_dict(a["core"], b["core"], dict_map)
+    sib = [col for col in SIB_COLS if col in c.columns]
     return pl.concat([c.select(*ID_COLS, id_key("s1_id").alias("s1k"), id_key("rec_id").alias("reck"),
-                               *RANK_COLS, "n_channels_hit"),
+                               *RANK_COLS, "n_channels_hit", *sib),
                       pl.DataFrame(f)], how="horizontal_extend")
 
 
@@ -196,21 +324,27 @@ def main() -> None:
 
     voc, lnn, w = vocab(a.split)
     log("idf vocab", n_tokens=len(w))
+    idf_lookup = dict(zip(zip(voc["A"]["country"].to_list(), voc["A"]["tok"].to_list()), voc["A"]["w"].to_list()))
+    dict_map = load_token_dict()
     s1 = entities(a.split, 1, voc, lnn)
+    dup = s1_name_dup(s1.select("entity_id", "country", "core"))
+    s1 = s1.join(dup, on="entity_id", how="left", maintain_order="left")
     log("S1 entities", rows=s1.height)
     rec = pl.concat([entities(a.split, n, voc, lnn) for n in (2, 3)])
     del voc
     log("S2+S3 entities", rows=rec.height)
 
     pf = pq.ParquetFile(path("interim_dir") / f"candidates_{a.split}.parquet")
+    cand_cols = pf.schema_arrow.names
+    sib_present = [col for col in SIB_COLS if col in cand_cols]
     parts, done = [], 0
     for i, batch in enumerate(pf.iter_batches(batch_size=CFG["features"]["chunk_rows"],
-                                              columns=[*ID_COLS, *RANK_COLS, "n_channels_hit"])):
+                                              columns=[*ID_COLS, *RANK_COLS, "n_channels_hit", *sib_present])):
         c = pl.from_arrow(batch)
         if a.smoke:
             c = c.head(a.smoke - done)
         p = base_dir / f"part-{i:05d}.parquet"
-        pair_features(c, s1, rec, w).write_parquet(p)
+        pair_features(c, s1, rec, w, idf_lookup, dict_map).write_parquet(p)
         parts.append(p)
         done += c.height
         log(f"pass1 part {i}", rows=c.height, total=done)
@@ -224,6 +358,10 @@ def main() -> None:
     keys.select(n_cand_rec=pl.len().over("reck").cast(pl.Int32),
                 n_cand_s1=pl.len().over("s1k").cast(pl.Int32)).write_parquet(rel_dir / "_n.parquet")
     rel_files = [rel_dir / "_n.parquet"]
+    tset95 = column(["reck", "name_tset"]).select(
+        rec_name_hits95=(pl.col("name_tset") >= 95).sum().over("reck").cast(pl.Int32))
+    tset95.write_parquet(rel_dir / "_tset95.parquet")
+    rel_files.append(rel_dir / "_tset95.parquet")
     for col in REL_COLS:
         relative(keys, column([col])[col]).write_parquet(rel_dir / f"{col}.parquet")
         rel_files.append(rel_dir / f"{col}.parquet")
@@ -235,12 +373,33 @@ def main() -> None:
         base = pl.read_parquet(p).drop(KEY_COLS)
         rel = [pl.scan_parquet(f).slice(off, base.height).collect() for f in rel_files]
         df = pl.concat([base, *rel], how="horizontal_extend")
+        df = df.with_columns(is_noaddr_ambiguous=((pl.col("rec_no_addr") == 1) & (pl.col("rec_name_hits95") >= 2))
+                             .cast(pl.Int8)).drop("rec_no_addr")
         assert "country" not in df.columns
         df.write_parquet(out / f"part-{i:05d}.parquet")
         off += base.height
     shutil.rmtree(base_dir)
     shutil.rmtree(rel_dir)
     log("assemble", rows=off, n_cols=df.width, parts=len(parts))
+
+    sib_out = [c for c in SIB_COLS if c in df.columns]
+    if CFG["gate"].get("sibling", {}).get("enabled", False):
+        assert sib_out == SIB_COLS, f"gate.sibling.enabled but candidates_{a.split} is missing {set(SIB_COLS) - set(sib_out)}"
+        # `df` is only the last part here: count over every written part
+        n_sib = pl.scan_parquet(out / "part-*.parquet").select(pl.col("sib_hit").sum()).collect().item()
+        assert n_sib > 0, f"gate.sibling.enabled but no sib_hit rows in {a.split} output"
+    else:
+        assert not sib_out, f"gate.sibling disabled but candidates_{a.split} still carries {sib_out}"
+    # test only: train is rebuilt first, so when train runs the test dir is still the previous (stale) build
+    other_dir = out_dir("train", a.smoke)
+    if a.split == "test" and not a.smoke and other_dir.exists():
+        other_cols = set(pl.scan_parquet(other_dir / "part-00000.parquet").collect_schema().names())
+        assert set(df.columns) == other_cols, f"feature columns differ train vs test: {set(df.columns) ^ other_cols}"
+
+    from .train import feature_cols  # local import: avoid a features<->train import cycle at module load
+    feats = feature_cols(a.split if not a.smoke else f"{a.split}_smoke")
+    print(f"model feature list ({len(feats)}): {feats}")  # schema-driven (feature_cols reads schema, not rows)
+
     log.dump(out / "features_timing.json", split=a.split, smoke=a.smoke, rows=off)
 
 
