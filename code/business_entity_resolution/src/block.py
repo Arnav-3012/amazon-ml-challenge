@@ -351,7 +351,8 @@ def main() -> None:
         with pl.Config(tbl_rows=-1, tbl_cols=-1, fmt_str_lengths=60, tbl_width_chars=250):
             print(pl.DataFrame(surv).drop("top_cost_tokens"))
     else:
-        lf = pl.scan_parquet(parts / "*.parquet")
+        # explicit list, not a glob: macOS writes "._*.parquet" AppleDouble stubs on exFAT volumes
+        lf = pl.scan_parquet(sorted(p for p in parts.glob("*.parquet") if not p.name.startswith("._")))
         if train:
             lf.sink_parquet(out / f"blockgrid_{split}_cap{cap}{sfx}.parquet")
         if main_cap:
@@ -361,7 +362,7 @@ def main() -> None:
                 s1_ids = pl.read_parquet(norm_path(split, 1), columns=["entity_id"])["entity_id"]
                 write_candidates(path("candidate_pairs"), pl.scan_parquet(cands).select("s1_id", "rec_id"), s1_ids)
         log("sink outputs")
-    shutil.rmtree(parts)
+    shutil.rmtree(parts, ignore_errors=True)  # exFAT: deleting a file also drops its "._" stub mid-walk
     total = {"split": split, "df_cap": cap, "m_max": m_max, "k_max": k_max, "bigrams": BCFG["bigrams"],
              "fallback_rarest": BCFG["fallback_rarest"], "smoke": a.smoke, "dry": a.dry,
              "total_s": round(time.perf_counter() - t_start, 1), "peak_rss_mb": peak_rss_mb(),

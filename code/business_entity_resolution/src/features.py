@@ -238,8 +238,8 @@ def main() -> None:
         assert "country" not in df.columns
         df.write_parquet(out / f"part-{i:05d}.parquet")
         off += base.height
-    shutil.rmtree(base_dir)
-    shutil.rmtree(rel_dir)
+    shutil.rmtree(base_dir, ignore_errors=True)  # exFAT "._" stubs vanish mid-walk
+    shutil.rmtree(rel_dir, ignore_errors=True)
     log("assemble", rows=off, n_cols=df.width, parts=len(parts))
     log.dump(out / "features_timing.json", split=a.split, smoke=a.smoke, rows=off)
 
