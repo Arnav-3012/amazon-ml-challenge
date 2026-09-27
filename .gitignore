@@ -24,3 +24,11 @@ models/*
 
 # packaging
 *_submission.zip
+
+# macOS AppleDouble stubs on the exFAT T7
+._*
+
+# krish-v2 experiment outputs (BER_PATH_* overrides)
+models_krish/
+oof_krish/
+output_krish/

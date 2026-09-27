@@ -1,0 +1,50 @@
+{
+ "global_t": 0.73,
+ "target_empty_pct": 6.01279451640413,
+ "t_by_country": {
+  "France": 0.98,
+  "India": 0.73,
+  "US": 0.73
+ },
+ "before": [
+  {
+   "country": "France",
+   "n_s1": 259452,
+   "empty_pct": 5.285370704407752,
+   "pred_per_s1": 3.380652297920232
+  },
+  {
+   "country": "India",
+   "n_s1": 809986,
+   "empty_pct": 6.2075146977849,
+   "pred_per_s1": 3.2300607664823837
+  },
+  {
+   "country": "US",
+   "n_s1": 663106,
+   "empty_pct": 5.8180743350233595,
+   "pred_per_s1": 3.3340823337445293
+  }
+ ],
+ "after": [
+  {
+   "country": "France",
+   "n_s1": 259452,
+   "empty_pct": 5.9833803555185545,
+   "pred_per_s1": 3.1931648243220327
+  },
+  {
+   "country": "India",
+   "n_s1": 809986,
+   "empty_pct": 6.2075146977849,
+   "pred_per_s1": 3.2300607664823837
+  },
+  {
+   "country": "US",
+   "n_s1": 663106,
+   "empty_pct": 5.8180743350233595,
+   "pred_per_s1": 3.3340823337445293
+  }
+ ],
+ "out": "/Volumes/T7 Shield/KRISH/AMAZON HACKATHON/amazon-ml-challenge/output_krish/matching_results_countryt.tsv"
+}

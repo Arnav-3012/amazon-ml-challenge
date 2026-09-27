@@ -99,8 +99,9 @@ def coref(df: pl.DataFrame, txt: pl.DataFrame, log: Log) -> pl.DataFrame:
             .with_columns(pl.col("coref_name", "coref_addr").fill_null(0)))
 
 
-def build(df: pl.DataFrame, carry: pl.DataFrame, split: str, log: Log) -> pl.DataFrame:
-    df = coref(context(df), texts(split), log)
+def build(ctx: pl.DataFrame, carry: pl.DataFrame, split: str, log: Log) -> pl.DataFrame:
+    """ctx = context() over ALL rows (so record/S1 context sees every competitor), already cut to the kept rows."""
+    df = coref(ctx, texts(split), log)
     log(f"features {split}", rows=df.height)
     return pl.concat([df, carry], how="horizontal")
 
@@ -138,30 +139,44 @@ def shift(p: np.ndarray, r: np.ndarray) -> dict:
             "rec_max_mean": float(rmax.mean())}
 
 
-def train(tag: str, log: Log) -> None:
+def train(tag: str, log: Log, only: list[str] | None = None) -> None:
     O = path("oof_dir")
     s1 = s1_table(0.02 if tag else 1.0)
     oof = (pl.read_parquet(O / f"oof_full{tag}.parquet").filter(pl.col("p_td").is_not_null())
            .join(s1.select(s="s1k", code="code"), left_on="s1k", right_on="s", how="left", maintain_order="left"))
     assert oof["code"].null_count() == 0, "OOF S1 missing from s1_table"
     car = carry_cols(tag)
+    # krish-v2 memory: stage 2 models only rows with stage-1 p >= p_floor; the rest keep p1 (< floor << t).
+    # Context is computed on ALL rows first so record/S1 ranks and sums still see every competitor.
+    p_all = oof["p_td"].to_numpy()
+    keep = p_all >= S2["p_floor"]
+    y_all = oof["label"].to_numpy().astype(np.int8)
+    log("p_floor", floor=S2["p_floor"], kept_rows=int(keep.sum()), all_rows=len(keep),
+        pos_below_floor=int(y_all[~keep].sum()), pos_all=int(y_all.sum()))
+    ctx = context(oof.select(s="s1k", r="reck", p="p_td")).filter(pl.Series(keep))
+    sub_i = oof["_i"].filter(pl.Series(keep))
     files = sorted(str(p) for p in Path(parts("train")).parent.glob("part-*.parquet"))
     cf = (pl.scan_parquet(files).with_row_index("_i").select("_i", *car)
-          .filter(pl.col("_i").is_in(oof["_i"].implode())).collect())
-    assert np.array_equal(cf["_i"].to_numpy(), oof["_i"].to_numpy()), "carry rows misaligned with OOF"
-    df = build(oof.select(s="s1k", r="reck", p="p_td"), cf.drop("_i"), "train", log)
-    y, p1 = oof["label"].to_numpy().astype(np.int8), oof["p_td"].to_numpy()
-    fold, code, r = oof["fold"].to_numpy(), oof["code"].to_numpy(), oof["reck"].to_numpy()
-    d = SimpleNamespace(code=code, y=y, meta=pl.DataFrame({"reck": r}))
+          .filter(pl.col("_i").is_in(sub_i.implode())).collect())
+    assert np.array_equal(cf["_i"].to_numpy(), sub_i.to_numpy()), "carry rows misaligned with OOF"
+    df = build(ctx, cf.drop("_i"), "train", log)
+    del ctx, cf
+    fold_all, code_all, r = oof["fold"].to_numpy(), oof["code"].to_numpy(), oof["reck"].to_numpy()
+    y, p1, fold, code = y_all[keep], p_all[keep], fold_all[keep], code_all[keep]
+    d = SimpleNamespace(code=code_all, y=y_all, meta=pl.DataFrame({"reck": r}))
     scope = ~drop_mask(s1.height, SEED + 2000)
-    base = score(s1, d, p1, scope, exact=truth_keys(s1))
+    base = score(s1, d, p_all, scope, exact=truth_keys(s1))
     ref = json.loads((O / f"cv_full{tag}.json").read_text())["b_test_density"]["macro_f05"]
     assert abs(base["macro_f05"] - ref) < 1e-9, f"stage-1 (b) rescored {base['macro_f05']} != cv_full.json {ref}"
     feats = {"full": CTX + car, "rank_only": [f for f in CTX + car if f not in P_ABS]}
+    feats = {k: v for k, v in feats.items() if only is None or k in only}  # krish-v2: time budget -> one variant
     rounds = 50 if tag else MC["num_boost_round"]
-    res, cols = {"stage1_b": {k: v for k, v in base.items() if k != "curve"}, "carry": car, "feats": feats}, {}
+    res, cols = {"stage1_b": {k: v for k, v in base.items() if k != "curve"}, "carry": car, "feats": feats,
+                 "p_floor": S2["p_floor"], "kept_rows": int(keep.sum())}, {}
     for name, fs in feats.items():
-        cols[name], iters = cv(matrix(df, fs), y, p1, fold, code, fs, f"{name}{tag}", rounds, log)
+        sub, iters = cv(matrix(df, fs), y, p1, fold, code, fs, f"{name}{tag}", rounds, log)
+        cols[name] = p_all.astype(np.float32)
+        cols[name][keep] = sub
         s = score(s1, d, cols[name], scope)
         gain = s["macro_f05"] - base["macro_f05"]
         res[name] = {**s, "best_iters": iters, "gain": gain, "keep": bool(gain >= S2["keep_gain"])}
@@ -183,26 +198,32 @@ def backup_stage1() -> None:
             shutil.copy2(src, dst)
 
 
-def predict(variant: str, log: Log) -> None:
+def predict(variant: str, log: Log, ignore_gate: bool = False) -> None:
     O = path("oof_dir")
     res = json.loads((O / "stage2.json").read_text())
     v, feats = res[variant], res["feats"][variant]
-    assert v["keep"], f"{variant}: gain {v['gain']:.5f} < keep_gain {S2['keep_gain']} -> ship stage 1 (predict --folds)"
+    assert v["keep"] or ignore_gate, f"{variant}: gain {v['gain']:.5f} < keep_gain {S2['keep_gain']} -> ship stage 1 (predict --folds)"
     tp = pl.read_parquet(O / "test_p.parquet")
     cf = pl.concat([pl.read_parquet(f, columns=["s1_id", "rec_id", *res["carry"]])
                     for f in sorted((path("features_dir") / "test").glob("part-*.parquet"))])
     assert cf["s1_id"].equals(tp["s1_id"]) and cf["rec_id"].equals(tp["rec_id"]), "test_p rows != test features rows"
-    df = build(tp.select(s=id_key("s1_id"), r=id_key("rec_id"), p="p"), cf.drop("s1_id", "rec_id"), "test", log)
+    pt = tp["p"].to_numpy()
+    keep = pt >= res.get("p_floor", 0.0)
+    ctx = context(tp.select(s=id_key("s1_id"), r=id_key("rec_id"), p="p")).filter(pl.Series(keep))
+    df = build(ctx, cf.drop("s1_id", "rec_id").filter(pl.Series(keep)), "test", log)
+    del ctx, cf
     X = matrix(df, feats)
     bsts = [lgb.Booster(model_file=str(path("models_dir") / f"stage2_{variant}_fold_{k}.txt"))
             for k in range(MC["n_folds"])]
-    p2 = np.mean([b.predict(X) for b in bsts], axis=0).astype(np.float32)
+    p2 = pt.astype(np.float32)
+    p2[keep] = np.mean([b.predict(X) for b in bsts], axis=0)
+    log("stage2 test scored", kept_rows=int(keep.sum()), all_rows=len(keep))
     scored = tp.select("s1_id", "rec_id").with_columns(p=pl.Series(p2))
     scored.write_parquet(O / "test_p2.parquet")
 
     o2 = pl.read_parquet(O / "oof_stage2.parquet", columns=["_i", "p_td", f"p2_{variant}"]).join(
         pl.read_parquet(O / "oof_full.parquet", columns=["_i", "reck"]), on="_i", how="left")
-    r_tr, r_te = o2["reck"].to_numpy(), df["r"].to_numpy()
+    r_tr, r_te = o2["reck"].to_numpy(), tp.select(id_key("rec_id")).to_series().to_numpy()
     res["p_shift"] = {"stage1": {"oof_b": shift(o2["p_td"].to_numpy(), r_tr), "test": shift(tp["p"].to_numpy(), r_te)},
                       variant: {"oof_b": shift(o2[f"p2_{variant}"].to_numpy(), r_tr), "test": shift(p2, r_te)}}
     print(json.dumps(res["p_shift"], indent=1), flush=True)
@@ -215,7 +236,8 @@ def predict(variant: str, log: Log) -> None:
     assert outside == 0, f"{outside} matches not in candidate set"
     assert matches["rec_id"].is_unique().all(), "a record matched to >1 S1"
     s1_ids = pl.read_parquet(norm_path("test", 1), columns=["entity_id"])["entity_id"]
-    backup_stage1()
+    if not ignore_gate:  # --ignore-gate writes a labelled below-bar candidate to its own path; nothing to back up
+        backup_stage1()
     write_candidates(path("matching_results"), matches.lazy(), s1_ids, list_col="matched_entity_ids")
     n_with = matches["s1_id"].n_unique()
     log("decide + write", variant=variant, t=t, matches=matches.height, s1_with_match=n_with,
@@ -227,13 +249,16 @@ def main() -> None:
     ap.add_argument("--smoke", action="store_true")
     ap.add_argument("--predict", action="store_true")
     ap.add_argument("--variant", default="full", choices=["full", "rank_only"])
+    ap.add_argument("--ignore-gate", action="store_true",
+                    help="write a below-keep_gain candidate anyway (point BER_PATH_matching_results at its own file)")
+    ap.add_argument("--only", nargs="+", choices=["full", "rank_only"], default=None, help="train these variants only")
     a = ap.parse_args()
     log = Log()
     if a.predict:
         assert not a.smoke, "--predict uses the full-run models"
-        predict(a.variant, log)
+        predict(a.variant, log, a.ignore_gate)
     else:
-        train("_smoke" if a.smoke else "", log)
+        train("_smoke" if a.smoke else "", log, a.only)
     log.dump(path("oof_dir") / f"stage2_timing_{'predict' if a.predict else 'train'}{'_smoke' if a.smoke else ''}.json")
 
 

@@ -37,7 +37,7 @@ import numpy as np
 import polars as pl
 import scipy.sparse as sp
 
-from .io import CFG, path
+from .io import CFG, parquet_files, path
 from .normalise import peak_rss_mb
 from .phonetic import add_skeletons
 
@@ -267,7 +267,7 @@ def main() -> None:
     out = path("interim_dir")
     parts = out / f"_parts_{split}_cap{cap}{sfx}"
     shutil.rmtree(parts, ignore_errors=True)
-    parts.mkdir(parents=True)
+    parts.mkdir(parents=True, exist_ok=True)
 
     steps, surv, clock = [], [], [time.perf_counter()]
 
@@ -342,9 +342,9 @@ def main() -> None:
         with pl.Config(tbl_rows=-1, tbl_cols=-1, fmt_str_lengths=60, tbl_width_chars=250):
             print(pl.DataFrame(surv).drop("top_cost_tokens"))
     else:
-        pl.scan_parquet(parts / "*.parquet").sink_parquet(out / f"blockgrid_{split}_cap{cap}{sfx}.parquet")
+        pl.scan_parquet(parquet_files(parts)).sink_parquet(out / f"blockgrid_{split}_cap{cap}{sfx}.parquet")
         log("sink outputs")
-    shutil.rmtree(parts)
+    shutil.rmtree(parts, ignore_errors=True)  # exFAT: deleting a file also drops its "._" stub mid-walk
     total = {"split": split, "df_cap": cap, "m_max": m_max, "k_max": k_max, "bigrams": BCFG["bigrams"],
              "fallback_rarest": BCFG["fallback_rarest"], "smoke": a.smoke, "dry": a.dry,
              "total_s": round(time.perf_counter() - t_start, 1), "peak_rss_mb": peak_rss_mb(),

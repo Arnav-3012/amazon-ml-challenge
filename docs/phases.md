@@ -147,3 +147,9 @@ missing. Revision 2 of docs/breakdown.md written from the real numbers.
 **2026-09-26 M5-2 DONE + Submit #1:** cv_full OOF (b) 0.9746 @ t=0.75 (a: 0.9751); predict --folds -> **LB 0.967** (M4 0.957). OOF->LB gap still -0.008. Backups `output/*_sub1.tsv`.
 
 **2026-09-26 block autopsy DONE:** lexical unions buy <= +0.001 ceiling at +28 cand/S1; 61% of v1 misses are in no channel. Next: stage-2 (M5-3) `stage2 --smoke` -> `stage2`; find the OOF->LB gap (India/France mix); encoder retrieval for the recall ceiling.
+
+**2026-09-26 krish-v2 setup:** exFAT fixes ported to M5 code (io.parquet_files, rmtree ignore_errors, mkdir exist_ok), `._*` gitignored, `../run_step.sh` runner + disk watchdog. M4 caches up to candidates are reusable; features + stage-1 must be rebuilt or copied from Arnav's run. Next: plan to beat LB 0.967 (awaiting go-ahead).
+
+**2026-09-27 krish-v2 overnight:** local M5-2 retrain + exp1 address-ambiguity features -> OOF(b) 0.97497 (+0.0004 vs Arnav). Decision layer and stage 2 (+0.0011) below their bars. Candidate A packaged + validated (recommended); B (stage 2) and C (per-country t) prepared, not shipped. Seed ensemble running. Results: docs/krish_v2_results.md.
+
+**2026-09-27 krish-v2 DONE:** seed ensemble +0.0002 (not kept). Final: A recommended (OOF(b) 0.97497, exp1 features); B stage 2 +0.0011 and C per-country t not shipped. See docs/krish_v2_results.md.

@@ -36,22 +36,23 @@ cv_full:                # M5-2 (src.cv_full)
   drop_frac: 0.19       # S1-dropout: train 4.68 S2/S3 records per S1 / 0.81 = 5.78 = test density (5.75)
   inner_valid_frac: 0.1 # share of a fold's training S1s held out for early stopping
   curve_fracs: [0.2, 0.5]
-  max_rss_mb: 20000     # stop if the process peak RSS passes this
+  max_rss_mb: 15000     # stop if the process peak RSS passes this (16 GB machine; preflight predicts 12.96 GB)
   ext_neg_rate: 0.25    # Bernoulli keep-rate for extension-only (not in_v1) sampled negatives; weight = 1/(rate product)
   easy_neg_rate: 0.2    # Bernoulli keep-rate for non-hard negatives in fold training (weight 1/rate, x ext); hard = sample_rows' hardest-first set
   preflight_fracs: [0.05, 0.2]  # --preflight: one fold-0 point per S1 fraction, linear fit -> 100%
   preflight_rounds: 50  # fixed LightGBM rounds per preflight point
 
 stage2:                 # M5-3 (src.stage2): stacked GBM on stage-1 OOF (b) p
-  n_carry: 10           # strongest stage-1 features by summed fold gain (record-side REC_COLS excluded)
+  n_carry: 20           # strongest stage-1 features by summed fold gain (record-side REC_COLS excluded); 20 = submission B
   coref_p: 0.8          # anchor = another record of the S1 with stage-1 p above this
   coref_sim: 90         # anchor supports the row when name_tset (or addr_tset) to it >= this
   max_anchors: 5        # top anchors by p per S1 (bounds record x record comparisons)
   pair_chunk: 5000000   # anchor pairs per token_set pass (memory knob)
+  p_floor: 0.01        # krish-v2 memory: stage 2 models rows with stage-1 p >= this; the rest keep p1
   keep_gain: 0.002      # ship only if stage-2 OOF (b) >= stage-1 OOF (b) + this
 
 features:
-  chunk_rows: 2000000   # candidate pairs per pass-1 part (memory knob, not a result knob)
+  chunk_rows: 1000000   # candidate pairs per pass-1 part (memory knob, not a result knob; 1M on the 16 GB machine)
 
 matcher:
   subset_fraction: 0.2  # iteration mode: first 20% of a seeded permutation of train S1 ids

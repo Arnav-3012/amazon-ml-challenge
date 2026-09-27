@@ -149,6 +149,15 @@ def s1_name_dup(s1: pl.DataFrame) -> pl.DataFrame:
     return n.select("entity_id", "dup")
 
 
+def s1_addr_dup(s1: pl.DataFrame) -> pl.DataFrame:
+    """entity_id -> count of OTHER S1 rows, same country, identical normalized address; -1 when the S1 has no
+    address. Country-agnostic ambiguity signal (krish-v2 exp1): test France S1s share an exact address 13.4% of
+    the time vs ~5% in train US/India, so an address match is weaker evidence there."""
+    n = s1.select("entity_id", "country", "addr").with_columns(
+        adup=pl.when(pl.col("addr") != "").then(pl.len().over("country", "addr") - 1).otherwise(-1).cast(pl.Int32))
+    return n.select("entity_id", "adup")
+
+
 NUM_RE = r"\d+[A-Za-z]?"
 
 
@@ -287,6 +296,7 @@ def pair_features(c: pl.DataFrame, s1: pl.DataFrame, rec: pl.DataFrame, w: np.nd
     for k in FIELDS:
         f[f"{k}_idfj"] = idf_jaccard(a[f"t_{k}"], b[f"t_{k}"], a[f"W_{k}"], b[f"W_{k}"], w)
     f["s1_name_dup"] = a["dup"].to_numpy()
+    f["s1_addr_dup"] = a["adup"].to_numpy()
     f.update(num_rel(a["core"], b["core"], a["addr"], b["addr"]))
     f.update(unmatched_tokens(a["name_toks"], b["name_toks"], a["addr_toks"], b["addr_toks"],
                               a["country"], idf_lookup))
@@ -319,8 +329,8 @@ def main() -> None:
     log, out = StepLog(), out_dir(a.split, a.smoke)
     shutil.rmtree(out, ignore_errors=True)
     base_dir, rel_dir = out / "_base", out / "_rel"
-    base_dir.mkdir(parents=True)
-    rel_dir.mkdir()
+    base_dir.mkdir(parents=True, exist_ok=True)
+    rel_dir.mkdir(exist_ok=True)
 
     voc, lnn, w = vocab(a.split)
     log("idf vocab", n_tokens=len(w))
@@ -329,6 +339,7 @@ def main() -> None:
     s1 = entities(a.split, 1, voc, lnn)
     dup = s1_name_dup(s1.select("entity_id", "country", "core"))
     s1 = s1.join(dup, on="entity_id", how="left", maintain_order="left")
+    s1 = s1.join(s1_addr_dup(s1.select("entity_id", "country", "addr")), on="entity_id", how="left", maintain_order="left")
     log("S1 entities", rows=s1.height)
     rec = pl.concat([entities(a.split, n, voc, lnn) for n in (2, 3)])
     del voc
@@ -362,6 +373,10 @@ def main() -> None:
         rec_name_hits95=(pl.col("name_tset") >= 95).sum().over("reck").cast(pl.Int32))
     tset95.write_parquet(rel_dir / "_tset95.parquet")
     rel_files.append(rel_dir / "_tset95.parquet")
+    atset95 = column(["reck", "addr_tset"]).select(  # krish-v2 exp1: # of the record's S1s with a near-equal address
+        rec_addr_hits95=(pl.col("addr_tset") >= 95).sum().over("reck").cast(pl.Int32))
+    atset95.write_parquet(rel_dir / "_atset95.parquet")
+    rel_files.append(rel_dir / "_atset95.parquet")
     for col in REL_COLS:
         relative(keys, column([col])[col]).write_parquet(rel_dir / f"{col}.parquet")
         rel_files.append(rel_dir / f"{col}.parquet")
@@ -378,8 +393,8 @@ def main() -> None:
         assert "country" not in df.columns
         df.write_parquet(out / f"part-{i:05d}.parquet")
         off += base.height
-    shutil.rmtree(base_dir)
-    shutil.rmtree(rel_dir)
+    shutil.rmtree(base_dir, ignore_errors=True)
+    shutil.rmtree(rel_dir, ignore_errors=True)
     log("assemble", rows=off, n_cols=df.width, parts=len(parts))
 
     sib_out = [c for c in SIB_COLS if c in df.columns]

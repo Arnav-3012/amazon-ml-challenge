@@ -75,3 +75,14 @@ Format: `path | purpose | what to check when something related breaks`. Update t
 - `code/business_entity_resolution/src/mine_dict.py` | standalone token-dictionary probe (India native transliteration + abbreviations), mined on 80% of train S1s, evaluated on the held-out 20%'s v1 misses; no pipeline change | KEY % in docs/mine_dict.md; needs candidates_train_v1.parquet + idf_train
 - `docs/mine_dict.md`, `artifacts/interim/token_dict.parquet` | mine_dict report / mappings (field, kind, s, t, co, n_src, share) | stale → rerun `python -m src.mine_dict`
 - `artifacts/logs/` | tee'd long-run logs + `diagnose_timing.json` | job died → tail the .log
+- `code/business_entity_resolution/src/decide_ef.py` | krish-v2 decision layer: fold-cross-fitted isotonic q on OOF (b), expected-F0.5 empty/prefix set choice vs the tuned threshold → `oof_dir/decide_ef.json`; `--apply` writes matching_results | thr variant must equal cv_full (b) (asserted)
+- `io.path()` env override `BER_PATH_<key>` | experiments write to their own dirs (`../krish_env.sh` → `models_krish/`, `oof_krish/`, `output_krish/`) | output landed in the wrong place → env not sourced
+- `models_krish/`, `oof_krish/`, `output_krish/` | krish-v2 local M5 retrain + experiments (gitignored) | never mixed with Arnav's models/, oof/, output/
+- `artifacts/features_m4/` | M4 feature parts (kept, 66 cols); `artifacts/features/` = M5 + exp1 (80 cols) | feature count mismatch → which dir
+- `experiments/` | NOT shipped: `country_t.py` (per-country threshold, prepared only — CLAUDE.md rule), `package.sh` (zip + validator → `../submissions/`) | zip layout issue → package.sh
+- `artifacts/progress_plan.json`, `progress.json`, `PROGRESS.md` | krish-v2 run plan + live progress (written by `../tracker.py`; viewer `../progress_view.py` via `../progress.sh`) | STALE → restart tracker
+- `code/business_entity_resolution/src/seed_avg.py` | krish-v2 Phase 4: averages cv_full OOF of seed runs (CV_SEED_SHIFT, same folds + (b) world) → `oof_dir/cv_full_ens.json`; `predict --folds --tags "" _s1 --cv-json cv_full_ens.json` scores the ensemble | rows/worlds differ → asserted
+- `docs/krish_v2_results.md` | krish-v2 experiment table, candidate zips, recommendation | stale → regenerate from oof_krish/*.json
+- `../submissions/` (T7, outside the repo) | candidate zips + validator logs from experiments/package.sh | never inside the repo
+- `gate --apply-v1` | regenerates the submitted v1 candidate set from the block grids (verified byte-identical candidate_pairs.tsv) | reproduction command in README / Documentation_template.md
+- `Documentation_template.md` (root) | FILLED methodology doc shipped in the zip (draft: docs/Documentation_B_draft.md) | edit the draft, then copy

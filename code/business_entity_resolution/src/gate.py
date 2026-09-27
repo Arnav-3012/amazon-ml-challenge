@@ -16,6 +16,8 @@ Run from code/business_entity_resolution/ (needs blockgrid_{split}_cap{df_cap}.p
   python -m src.gate --split test
   python -m src.gate --eval          # docs/blocking_v2.md: PC, perfect-matcher F0.5 ceiling, cand/S1 per (m, variant, n)
   python -m src.gate --apply         # gate.m/n/variant -> candidates_{train,test}.parquet + output/candidate_pairs.tsv
+  python -m src.gate --apply-v1      # the submitted set: v1 (blocking m/k/select) -> candidates_{train,test}(_v1).parquet
+                                     # + output/candidate_pairs.tsv; no pool needed, only the block grids
 """
 import argparse
 import shutil
@@ -25,7 +27,7 @@ import polars as pl
 
 from .block import BCFG, CHANNELS, RANK_COLS, finalize, norm_path
 from .decide import md
-from .io import CFG, ROOT, StepLog, load_gt_pairs, path, write_candidates
+from .io import CFG, ROOT, StepLog, load_gt_pairs, parquet_files, path, write_candidates
 
 GCFG = CFG["gate"]
 PAIR = ["s1_id", "rec_id"]
@@ -77,7 +79,7 @@ def build(split: str, log: StepLog) -> None:
     B, K, ms = GCFG["buckets"], GCFG["pool_k"], GCFG["sweep_m"]
     for m in ms:
         shutil.rmtree(pool_dir(split, m), ignore_errors=True)
-        pool_dir(split, m).mkdir(parents=True)
+        pool_dir(split, m).mkdir(parents=True, exist_ok=True)
     src = finalize(grid(split), max(ms), K, CHANNELS)
     for b in range(B):
         base = src.filter(pl.col("s1_id").hash(CFG["seed"]) % B == b).collect()
@@ -127,7 +129,7 @@ def evaluate(log: StepLog) -> None:
         te = {"test cand/S1": tot["test"][f"pool_m{m}"] / nte} if "test" in tot else {}
         rows.append(row("pool, ungated", m, "-", ref, pl.col(f"pool_m{m}"), tot["train"][f"pool_m{m}"] / ntr, te))
     for m in GCFG["sweep_m"]:
-        pools = {sp: pl.scan_parquet(pool_dir(sp, m) / "*.parquet") for sp in ("train", "test")
+        pools = {sp: pl.scan_parquet(parquet_files(pool_dir(sp, m))) for sp in ("train", "test")
                  if pool_dir(sp, m).exists()}
         f = (ref.lazy().join(pools["train"].select(*PAIR, "gr_pre", "gr_v1"), on=PAIR, how="left")
              .collect(engine="streaming"))
@@ -182,7 +184,7 @@ def apply(log: StepLog) -> None:
     for split in ("train", "test"):
         v1_bak = I / f"candidates_{split}_v1.parquet"
         assert v1_bak.exists(), f"{v1_bak} missing -- v1 backup must exist before --apply (run once on the v1 config first)"
-        pool = pl.scan_parquet(pool_dir(split, m) / "*.parquet").filter(pl.col(f"gr_{v}") <= n).select(
+        pool = pl.scan_parquet(parquet_files(pool_dir(split, m))).filter(pl.col(f"gr_{v}") <= n).select(
             *PAIR, *RANK_COLS, "n_channels_hit")
         if sib_on:
             schema = pool.collect_schema()
@@ -231,16 +233,37 @@ def apply(log: StepLog) -> None:
     log("candidate_pairs.tsv", path=str(path("candidate_pairs")), rows=parquet_pairs.height)
 
 
+def apply_v1(log: StepLog) -> None:
+    """Each split's grid cut by block.finalize at blocking.m/k/select (channel X, record top-5 U S1 top-10 per source):
+    the M3b candidate set the submission scores. Ranks are intrinsic to each direction, so cutting the wider grid
+    equals a direct m/k run (checked: train 69,043,101 rows, 0 difference to the M3b file). Also writes the _v1
+    copy that mine_dict reads, and output/candidate_pairs.tsv from the exact frame the matcher scores."""
+    I = path("interim_dir")
+    for split in ("train", "test"):
+        dst = I / f"candidates_{split}.parquet"
+        finalize(grid(split), BCFG["m"], BCFG["k"], tuple(BCFG["select"])).sink_parquet(dst)
+        shutil.copyfile(dst, I / f"candidates_{split}_v1.parquet")
+        per = pl.scan_parquet(dst).group_by("s1_id").len().collect(engine="streaming")["len"]
+        log(f"v1 {split}", rows=int(per.sum()), s1_with_cand=per.len(), cand_per_s1=round(float(per.sum()) /
+            pl.scan_parquet(norm_path(split, 1)).select(pl.len()).collect().item(), 2))
+    s1_ids = pl.read_parquet(norm_path("test", 1), columns=["entity_id"])["entity_id"]
+    write_candidates(path("candidate_pairs"), pl.scan_parquet(I / "candidates_test.parquet").select(PAIR), s1_ids)
+    log("candidate_pairs.tsv", path=str(path("candidate_pairs")))
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument("--split", choices=("train", "test"))
     g.add_argument("--eval", action="store_true")
     g.add_argument("--apply", action="store_true")
+    g.add_argument("--apply-v1", action="store_true")
     a = ap.parse_args()
     log = StepLog()
-    mode = "eval" if a.eval else "apply" if a.apply else a.split
-    if a.eval:
+    mode = "eval" if a.eval else "apply" if a.apply else "apply_v1" if a.apply_v1 else a.split
+    if a.apply_v1:
+        apply_v1(log)
+    elif a.eval:
         evaluate(log)
     elif a.apply:
         apply(log)

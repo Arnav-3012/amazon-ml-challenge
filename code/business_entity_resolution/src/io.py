@@ -1,6 +1,7 @@
 """TSV I/O for the challenge files. Paths come from configs/config.yaml, resolved against the repo root."""
 import csv
 import json
+import os
 import resource
 import sys
 import time
@@ -20,7 +21,14 @@ with open(PKG_DIR / "configs" / "config.yaml") as _f:
 
 
 def path(key: str) -> Path:
-    return ROOT / CFG["paths"][key]
+    """Env BER_PATH_<key> (repo-relative) overrides the config path: experiments write to their own dirs/files."""
+    return ROOT / os.environ.get(f"BER_PATH_{key}", CFG["paths"][key])
+
+
+def parquet_files(d: Path) -> list[str]:
+    """Sorted *.parquet in d, minus the "._*" AppleDouble stubs macOS writes next to every file on exFAT
+    (a bare "*.parquet" glob picks them up and the read fails)."""
+    return sorted(str(p) for p in Path(d).glob("*.parquet") if not p.name.startswith("._"))
 
 
 def peak_rss_mb() -> float:

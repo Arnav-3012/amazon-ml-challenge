@@ -37,7 +37,7 @@ from rapidfuzz.process import cdist
 
 from .block import CHANNELS, finalize, norm_path
 from .gate import GCFG, N_MAX, VARIANTS, gate_bucket, grid, pool_dir, rec_best
-from .io import CFG, ROOT, StepLog, load_gt_pairs, path
+from .io import CFG, ROOT, StepLog, load_gt_pairs, parquet_files, path
 
 SCFG = CFG["gate"]  # sib_margin lives under gate: in config.yaml, alongside m/n/variant
 PAIR = ["s1_id", "rec_id"]
@@ -142,7 +142,7 @@ def sibling_support(split: str, delta: float, margins: pl.DataFrame, edges: pl.D
 
 def expand(cand: pl.DataFrame, split: str, m: int, log: StepLog) -> pl.DataFrame:
     """(s1_id, rec_id, sib_anchor_margin, n_sib_anchors, sib_name_tset) for pairs NOT already in the v2 pool."""
-    existing = pl.scan_parquet(pool_dir(split, m) / "*.parquet").select(*PAIR).collect(engine="streaming")
+    existing = pl.scan_parquet(parquet_files(pool_dir(split, m))).select(*PAIR).collect(engine="streaming")
     new = cand.join(existing, on=PAIR, how="anti").with_columns(sib_hit=pl.lit(True))
     log(f"{split} new pairs (not already in v2)", rows=new.height)
     return new
@@ -153,7 +153,7 @@ def all_features(cand: pl.DataFrame, split: str, m: int) -> pl.DataFrame:
     (s1_id, rec_id), one row per pair. Consumed by the features stage so sib_* reaches the model as columns,
     not just as extra candidate rows."""
     cand = cand.with_columns(sib_hit=pl.lit(True))
-    pool = pl.scan_parquet(pool_dir(split, m) / "*.parquet").select(*PAIR).collect(engine="streaming")
+    pool = pl.scan_parquet(parquet_files(pool_dir(split, m))).select(*PAIR).collect(engine="streaming")
     return (pool.join(cand, on=PAIR, how="full", coalesce=True)
             .with_columns(pl.col("sib_hit").fill_null(False), pl.col("sib_anchor_margin").fill_null(0.0),
                           pl.col("n_sib_anchors").fill_null(0), pl.col("sib_name_tset").fill_null(0.0))
@@ -167,7 +167,7 @@ def build(split: str, delta: float, margins: pl.DataFrame, edges: pl.DataFrame, 
     log(f"{split} d{delta} sibling_support", rows=cand.height)
     d = sib_dir(split, delta)
     shutil.rmtree(d, ignore_errors=True)
-    d.mkdir(parents=True)
+    d.mkdir(parents=True, exist_ok=True)
     expand(cand, split, m, log).write_parquet(d / "part-000.parquet")
     print(f"build wrote part-000.parquet: split={split} delta={delta}", flush=True)
     all_features(cand, split, m).write_parquet(d / "features.parquet")
@@ -183,7 +183,7 @@ def evaluate(log: StepLog) -> None:
     gt = load_gt_pairs().select("s1_id", rec_id="match_id").join(s1, on="s1_id")
     ntrue = s1.join(gt.group_by("s1_id").len("ntrue"), on="s1_id", how="left").select(
         "s1_id", pl.col("ntrue").fill_null(0))
-    base_hits = (pl.scan_parquet(pool_dir("train", GCFG["m"]) / "*.parquet")
+    base_hits = (pl.scan_parquet(parquet_files(pool_dir("train", GCFG["m"])))
                  .filter(pl.col(f"gr_{GCFG['variant']}") <= GCFG["n"]).select(*PAIR)
                  .join(gt.lazy(), on=PAIR, how="inner").collect(engine="streaming"))
     base_ceiling = ceiling(ntrue, base_hits.group_by("s1_id").len("h"))
@@ -196,7 +196,7 @@ def evaluate(log: StepLog) -> None:
         d = sib_dir("train", delta)
         if not d.exists():
             continue
-        new = pl.scan_parquet(d / "*.parquet").collect(engine="streaming")
+        new = pl.scan_parquet(parquet_files(d)).collect(engine="streaming")
         hit = new.join(gt, on=PAIR, how="inner")
         combined = pl.concat([base_hits.select(*PAIR), hit.select(*PAIR)]).unique()
         comb_ceiling = ceiling(ntrue, combined.group_by("s1_id").len("h"))

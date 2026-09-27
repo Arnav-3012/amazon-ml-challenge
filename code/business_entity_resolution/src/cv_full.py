@@ -22,6 +22,7 @@ Run from code/business_entity_resolution/:
 """
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -42,6 +43,10 @@ from .metric import macro_f05
 from .train import SCORE_COLS, dataset, feature_cols, fit, fit_ds, parts, sample_rows
 
 FC, MC, SEED = CFG["cv_full"], CFG["matcher"], CFG["seed"]
+# krish-v2 seed ensemble: CV_SEED_SHIFT=n moves the TRAINING-side seeds (training dropout worlds, inner split, row
+# sampling, LightGBM) while folds (SEED) and the (b) eval world (SEED+2000) stay fixed, so runs average row by row.
+SHIFT = int(os.environ.get("CV_SEED_SHIFT", "0"))
+TSEED = SEED + 100000 * SHIFT
 RR_COLS = [f"{ch}_rrank" for ch in CHANNELS]
 REC_COLS = ["n_cand_rec", *(f"{c}_{x}" for c in REL_COLS for x in ("drec", "rkrec", "gaprec")), *RR_COLS]
 TS = np.round(np.arange(*CFG["decide"]["t_grid"]), 4)
@@ -139,7 +144,7 @@ def world(meta: pl.DataFrame, keep: np.ndarray, out: Path, log: Log) -> None:
     """Record-side columns after removing the rows with keep=False -> out/{col}.npy (float32, meta row order,
     NaN on removed rows and where the value is null)."""
     shutil.rmtree(out, ignore_errors=True)
-    out.mkdir(parents=True)
+    out.mkdir(parents=True, exist_ok=True)
     idx = np.flatnonzero(keep)
 
     def save(name: str, v: pl.Series) -> None:
@@ -262,10 +267,10 @@ def fold_datasets(d: Data, tr: np.ndarray, w: np.ndarray, va: np.ndarray, wdir: 
     """Constructed train/valid Datasets; each float32 matrix is dropped right after binning, so at most one
     matrix + the bins are alive at a time."""
     X = d.gather(tr, wdir)
-    dtr = dataset(X, d.y[tr], d.feats, w)
+    dtr = dataset(X, d.y[tr], d.feats, w, seed=TSEED if SHIFT else None)
     del X
     Xv = d.gather(va, wdir)
-    dva = dataset(Xv, d.y[va], d.feats, reference=dtr)
+    dva = dataset(Xv, d.y[va], d.feats, reference=dtr, seed=TSEED if SHIFT else None)
     del Xv
     return dtr, dva
 
@@ -273,10 +278,10 @@ def fold_datasets(d: Data, tr: np.ndarray, w: np.ndarray, va: np.ndarray, wdir: 
 def split_fold(s1: pl.DataFrame, k: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """(dropped S1 mask of fold k's world, training S1 mask, inner early-stopping S1 mask)."""
     n = s1.height
-    drop = drop_mask(n, SEED + 1000 + k)
+    drop = drop_mask(n, TSEED + 1000 + k)
     tr = np.flatnonzero((s1["fold"].to_numpy() != k) & ~drop)
     inner = np.zeros(n, bool)
-    inner[np.random.default_rng(SEED + 3000 + k).choice(tr, round(FC["inner_valid_frac"] * len(tr)), replace=False)] = True
+    inner[np.random.default_rng(TSEED + 3000 + k).choice(tr, round(FC["inner_valid_frac"] * len(tr)), replace=False)] = True
     train = np.zeros(n, bool)
     train[tr] = True
     return drop, train & ~inner, inner
@@ -292,14 +297,14 @@ def run(s1: pl.DataFrame, d: Data, tag: str, smoke: bool, log: Log) -> None:
         drop, train, inner = split_fold(s1, k)
         wdir = work / f"fold{k}"
         world(d.meta, ~drop[d.code], wdir, log)
-        tr, w = weighted_sample_rows(np.flatnonzero(train[d.code]), d.y, hard, d.in_v1, np.random.default_rng(SEED + k))
+        tr, w = weighted_sample_rows(np.flatnonzero(train[d.code]), d.y, hard, d.in_v1, np.random.default_rng(TSEED + k))
         va = np.flatnonzero(inner[d.code])  # early-stopping/valid set: unsampled, unweighted (see weighted_sample_rows)
         dtr, dva = fold_datasets(d, tr, w, va, wdir)
-        shutil.rmtree(wdir)
+        shutil.rmtree(wdir, ignore_errors=True)
         log(f"fold {k} data", train_rows=len(tr), train_pos=int(d.y[tr].sum()), valid_rows=len(va),
             train_s1=int(train.sum()), dropped_s1=int(drop.sum()), weighted_rows=int((w > 1).sum()),
             ext_rows_kept=int((~d.in_v1[tr]).sum()))
-        bst = fit_ds(dtr, rounds, dva)
+        bst = fit_ds(dtr, rounds, dva, seed=TSEED if SHIFT else None)
         del dtr, dva
         bst.save_model(out_m / f"fold_{k}{tag}.txt")
         folds.append({"fold": k, "best_iter": bst.best_iteration, "train_rows": len(tr), "valid_rows": len(va),
@@ -312,7 +317,7 @@ def run(s1: pl.DataFrame, d: Data, tag: str, smoke: bool, log: Log) -> None:
     keep = ~drop[d.code]
     world(d.meta, keep, work / "eval", log)
     p_td = d.predict(boosters, work / "eval", keep)
-    shutil.rmtree(work)
+    shutil.rmtree(work, ignore_errors=True)
     log("OOF (b) predicted")
     d.meta.select("_i", "s1k", "reck", "label").with_columns(
         fold=pl.Series(d.fold), p_std=pl.Series(p_std), p_td=pl.Series(p_td).fill_nan(None)).write_parquet(
@@ -356,7 +361,7 @@ def curve(s1: pl.DataFrame, d: Data, tag: str, log: Log) -> None:
     world(d.meta, keepE, work / "eval", log)
     rows0 = np.flatnonzero((d.fold == 0) & keepE)
     X0 = d.gather(rows0, work / "eval")
-    shutil.rmtree(work)
+    shutil.rmtree(work, ignore_errors=True)
     scope = (s1["fold"].to_numpy() == 0) & ~dropE
     out = []
 
@@ -389,7 +394,7 @@ def preflight_point(frac: float, log: Log) -> dict:
     tr, w = weighted_sample_rows(np.flatnonzero(train[d.code]), d.y, d.meta["hard"].to_numpy(), d.in_v1,
                                  np.random.default_rng(SEED))
     dtr, dva = fold_datasets(d, tr, w, np.flatnonzero(inner[d.code]), wdir)
-    shutil.rmtree(wdir.parent)
+    shutil.rmtree(wdir.parent, ignore_errors=True)
     t1 = time.monotonic()
     fit_ds(dtr, FC["preflight_rounds"], dva)
     log("preflight fit", frac=frac)
@@ -435,7 +440,7 @@ def main() -> None:
     g.add_argument("--preflight-point", type=float, help=argparse.SUPPRESS)  # internal: one preflight subprocess
     ap.add_argument("--smoke", action="store_true")
     a = ap.parse_args()
-    log, tag = Log(), "_smoke" if a.smoke else ""
+    log, tag = Log(), ("_smoke" if a.smoke else "") + (f"_s{SHIFT}" if SHIFT else "")
     if a.preflight_point is not None:
         print("PREFLIGHT_POINT " + json.dumps(preflight_point(a.preflight_point, log)), flush=True)
         return
@@ -458,7 +463,7 @@ def main() -> None:
             ne = int((~((stored == got) | (np.isnan(stored) & np.isnan(got)))).sum())
             if ne:
                 bad[c] = ne
-        shutil.rmtree(wdir)
+        shutil.rmtree(wdir, ignore_errors=True)
         assert not bad, f"no-drop world differs from stored features (rows per column): {bad}"
         log("check OK", columns=len(REC_COLS))
         check_weighted_sampling(log)

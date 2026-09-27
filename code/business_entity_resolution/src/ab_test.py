@@ -58,7 +58,7 @@ def main() -> None:
     world(d.meta, keepE, work / "eval", log)
     rows0 = np.flatnonzero((d.fold == 0) & keepE)
     X0 = d.gather(rows0, work / "eval")
-    shutil.rmtree(work)
+    shutil.rmtree(work, ignore_errors=True)
     scope = (s1["fold"].to_numpy() == 0) & ~dropE
     has_cand = np.bincount(d.code[rows0], minlength=s1.height) > 0
     single = s1["ntrue"].to_numpy() == 0
