@@ -1,0 +1,91 @@
+{
+ "model": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+ "device": "mps",
+ "by": [
+  {
+   "country": "India",
+   "variant": "norm",
+   "pool": 50000,
+   "kind": "miss",
+   "n": 5000,
+   "recall@10": 32.18,
+   "recall@25": 37.46,
+   "recall@50": 41.88
+  },
+  {
+   "country": "India",
+   "variant": "norm",
+   "pool": 50000,
+   "kind": "hit",
+   "n": 2000,
+   "recall@10": 84.15,
+   "recall@25": 86.25,
+   "recall@50": 87.75
+  },
+  {
+   "country": "India",
+   "variant": "norm",
+   "pool": 500000,
+   "kind": "miss",
+   "n": 5000,
+   "recall@10": 23.799999999999997,
+   "recall@25": 27.66,
+   "recall@50": 29.880000000000003
+  },
+  {
+   "country": "India",
+   "variant": "norm",
+   "pool": 500000,
+   "kind": "hit",
+   "n": 2000,
+   "recall@10": 79.55,
+   "recall@25": 81.2,
+   "recall@50": 82.95
+  },
+  {
+   "country": "US",
+   "variant": "norm",
+   "pool": 50000,
+   "kind": "miss",
+   "n": 5000,
+   "recall@10": 48.38,
+   "recall@25": 55.50000000000001,
+   "recall@50": 61.46
+  },
+  {
+   "country": "US",
+   "variant": "norm",
+   "pool": 50000,
+   "kind": "hit",
+   "n": 2000,
+   "recall@10": 93.95,
+   "recall@25": 95.7,
+   "recall@50": 96.3
+  },
+  {
+   "country": "US",
+   "variant": "norm",
+   "pool": 500000,
+   "kind": "miss",
+   "n": 5000,
+   "recall@10": 32.62,
+   "recall@25": 39.44,
+   "recall@50": 44.56
+  },
+  {
+   "country": "US",
+   "variant": "norm",
+   "pool": 500000,
+   "kind": "hit",
+   "n": 2000,
+   "recall@10": 90.45,
+   "recall@25": 91.8,
+   "recall@50": 92.95
+  }
+ ],
+ "texts_per_s": 804.8,
+ "peak_rss_mb": 7376,
+ "all_texts": 24229173,
+ "projected_full_embed_h": 8.36,
+ "total_s": 1294
+}
