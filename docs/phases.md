@@ -163,3 +163,5 @@ missing. Revision 2 of docs/breakdown.md written from the real numbers.
 **2026-09-27 rebuild step 3 DONE: cv_full FULL** (14.1 h, peak ws 11.4 GB / private 17.2 GB): OOF (a) 0.97455 @ t=0.74, OOF (b) 0.97392 @ t=0.75 vs M5-2 0.97515 / 0.97459 (-0.0006 / -0.0007, mostly India). Probable cause: no token_dict.parquet here -> name_tset_dict = -1 constant. Stopped before predict --folds.
 
 **2026-09-27 M5-2 rebuild -> submission:** user chose single-model scoring (fold_0, t=0.75) for time; predict --folds --models 1 running, then validator. Stage 2 / encoders skipped (deadline). M8 packaging next.
+
+**2026-09-27 submission ready to package:** predict fold_0 @ t=0.75 -> 5,695,110 matches, 5.92% empty; validator PASS. OOF (b) 0.9739. Committing + building the zip.

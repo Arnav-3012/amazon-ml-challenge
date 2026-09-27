@@ -32,7 +32,7 @@ Times / peak memory measured on the 12-core, 15.7 GB Windows machine (2026-09-25
 | 6 | `python -m src.features --split train` | `artifacts/features/train/part-*.parquet` (80 cols) | 44 min / 10.9 GB |
 | 7 | `python -m src.features --split test` | `artifacts/features/test/part-*.parquet` | 39 min / 10.5 GB |
 | 8 | `python -m src.cv_full` | `models/fold_{0..4}.txt`, `oof/oof_full.parquet`, `oof/cv_full.json` | 14.1 h / 11.4 GB ws, 17.2 GB committed |
-| 9 | `python -m src.predict --folds --models 1` | **`output/matching_results.tsv`**, `oof/test_p.parquet` | ~3 h |
+| 9 | `python -m src.predict --folds --models 1` | **`output/matching_results.tsv`**, `oof/test_p.parquet` | 2.66 h / 9.3 GB |
 | 10 | `python ../../utils/validate_submission.py --matching ../../output/matching_results.tsv --candidate ../../output/candidate_pairs.tsv --test-dir ../../dataset/test` (from the repo root: drop the `../../`) | PASS | — |
 
 ¹ Measured with a memory-reduced `block.py` (same output, verified identical) that was lost before packaging; the
