@@ -1,0 +1,6 @@
+{'step': 'build pairs', 's': 13.7, 'peak_rss_mb': 6736, 'train': 199849, 'eval_scope': 1407446}
+{'step': 'load texts', 's': 0.4, 'peak_rss_mb': 6736}
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Loading weights:   0%|          | 0/105 [00:00<?, ?it/s]Loading weights: 100%|██████████| 105/105 [00:00<00:00, 8752.20it/s]
+/opt/homebrew/Cellar/python@3.11/3.11.13/Frameworks/Python.framework/Versions/3.11/lib/python3.11/multiprocessing/resource_tracker.py:254: UserWarning: resource_tracker: There appear to be 1 leaked semaphore objects to clean up at shutdown
+  warnings.warn('resource_tracker: There appear to be %d '

@@ -72,35 +72,47 @@ def sample_rows(idx: np.ndarray, y: np.ndarray, hard: np.ndarray, rng: np.random
     return np.sort(np.concatenate([pos, order[:n_hard], rand]))
 
 
-def params(seed: int | None = None) -> dict:
-    return {**MC["lgb"], "seed": SEED if seed is None else seed, "metric": "binary_logloss"}
+def perf_cores() -> int:
+    """Physical performance cores (Apple Silicon P-cores; falls back to logical core count elsewhere)."""
+    try:
+        import subprocess
+        return int(subprocess.check_output(["sysctl", "-n", "hw.perflevel0.physicalcpu"], text=True).strip())
+    except Exception:
+        import os
+        return os.cpu_count() or 1
+
+
+def params(seed: int | None = None, overrides: dict | None = None) -> dict:
+    return {**MC["lgb"], "seed": SEED if seed is None else seed, "metric": "binary_logloss", **(overrides or {})}
 
 
 def dataset(X: np.ndarray, y: np.ndarray, feats: list[str], weight: np.ndarray | None = None,
-            reference: lgb.Dataset | None = None, seed: int | None = None) -> lgb.Dataset:
+            reference: lgb.Dataset | None = None, seed: int | None = None, overrides: dict | None = None) -> lgb.Dataset:
     """Constructed (binned) Dataset. free_raw_data drops LightGBM's reference to X, so the caller can `del X`
     right after and only the bins stay in memory. Same params as training (binning params are fixed at construct)."""
-    return lgb.Dataset(X, label=y, weight=weight, feature_name=feats, reference=reference, params=params(seed),
-                       free_raw_data=True).construct()
+    return lgb.Dataset(X, label=y, weight=weight, feature_name=feats, reference=reference,
+                       params=params(seed, overrides), free_raw_data=True).construct()
 
 
-def fit_ds(dtr: lgb.Dataset, rounds: int, dva: lgb.Dataset | None = None, seed: int | None = None) -> lgb.Booster:
+def fit_ds(dtr: lgb.Dataset, rounds: int, dva: lgb.Dataset | None = None, seed: int | None = None,
+          overrides: dict | None = None) -> lgb.Booster:
     kw = {}
     if dva is not None:
         kw = {"valid_sets": [dva], "valid_names": ["heldout"],
               "callbacks": [lgb.early_stopping(MC["early_stopping"], verbose=False), lgb.log_evaluation(100)]}
-    return lgb.train(params(seed), dtr, rounds, **kw)
+    return lgb.train(params(seed, overrides), dtr, rounds, **kw)
 
 
 def fit(X: np.ndarray, y: np.ndarray, feats: list[str], rounds: int, valid: tuple | None = None,
-        weight: np.ndarray | None = None, seed: int | None = None) -> lgb.Booster:
+        weight: np.ndarray | None = None, seed: int | None = None, overrides: dict | None = None) -> lgb.Booster:
     """weight: per-row training weight (e.g. inverse sampling probability), None = uniform. The valid set is
     never weighted -- early stopping and the reported heldout logloss must read as an unweighted, unsampled
     metric, or the stopping decision itself would be biased by the sampling scheme.
-    seed: LightGBM seed override (bagging/feature_fraction draws); None = config seed."""
-    dtr = dataset(X, y, feats, weight, seed=seed)
-    dva = dataset(valid[0], valid[1], feats, reference=dtr, seed=seed) if valid is not None else None
-    return fit_ds(dtr, rounds, dva, seed)
+    seed: LightGBM seed override (bagging/feature_fraction draws); None = config seed.
+    overrides: extra/overriding lgb params (e.g. learning_rate, num_threads for --fast)."""
+    dtr = dataset(X, y, feats, weight, seed=seed, overrides=overrides)
+    dva = dataset(valid[0], valid[1], feats, reference=dtr, seed=seed, overrides=overrides) if valid is not None else None
+    return fit_ds(dtr, rounds, dva, seed, overrides)
 
 
 def calibration(y: np.ndarray, p: np.ndarray) -> list[dict]:

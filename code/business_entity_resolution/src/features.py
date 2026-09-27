@@ -53,8 +53,9 @@ FIELDS = {  # IDF-Jaccard field -> (token column, idf channel, token prefix in t
 }
 REL_COLS = ["X_score", "A_score", "B_score", "C_score", "name_tset", "addr_tset"]
 MARKER_RE = r"(?i)\(\s*(?:fr\p{L}nce|india|usa?)\s*\)"
-ENT_COLS = ["entity_id", "country", "business_name", "core_name", "legal_form", "aliases", "name_tokens",
-            "addr_tokens", "addr_number", "addr_street_core", "has_address", "is_nonascii_raw"]
+ENT_COLS = ["entity_id", "country", "business_name", "business_address", "core_name", "legal_form", "aliases",
+            "name_tokens", "addr_tokens", "addr_number", "addr_street_core", "has_address", "is_nonascii_raw"]
+RANGE_RE = r"(\d+)\s*-\s*(\d+)"  # raw address only: normalise's punct-strip splits "16-20" into two tokens
 
 
 def out_dir(split: str, smoke: int = 0):
@@ -96,12 +97,14 @@ def entities(split: str, n: int, voc: dict[str, pl.DataFrame], lnn: pl.DataFrame
 def prep(df: pl.DataFrame, voc: dict[str, pl.DataFrame], lnn: pl.DataFrame) -> pl.DataFrame:
     df = add_skeletons(df).with_columns(_bg=_bigrams(df["name_tokens"]))
     toks = {f: map_tokens(df, col, voc[ch], lnn, pre) for f, (col, ch, pre) in FIELDS.items()}
+    g = df["business_address"].str.extract_all(RANGE_RE)  # ["16-20", "554-558", ...] per row, raw string
     return df.select(
         "entity_id", "country", core="core_name", legal="legal_form", aliases="aliases",
         addr=pl.col("addr_tokens").list.join(" "), num="addr_number", street="addr_street_core",
         has_addr="has_address", nonascii="is_nonascii_raw", marker=pl.col("business_name").str.contains(MARKER_RE),
         name_toks="name_tokens", addr_toks="addr_tokens",
-    ).with_columns(*(s for f, t in toks.items() for s in (t["t"].alias(f"t_{f}"), t["W"].alias(f"W_{f}"))))
+    ).with_columns(*(s for f, t in toks.items() for s in (t["t"].alias(f"t_{f}"), t["W"].alias(f"W_{f}"))),
+                  ranges=g)
 
 
 def _cp(x: list, y: list, scorer) -> np.ndarray:
@@ -139,6 +142,32 @@ def best_alias(a: pl.DataFrame, b: pl.DataFrame) -> np.ndarray:
 def code3(x: pl.Series, y: pl.Series) -> np.ndarray:
     ex, ey = (x == "").to_numpy(), (y == "").to_numpy()
     return np.select([ex & ey, ex | ey, (x == y).to_numpy()], [0, 1, 2], 3).astype(np.int8)
+
+
+LEGAL_REL = {"both_none": 0, "equal": 1, "added_on_rec": 2, "dropped_on_rec": 3, "swapped": 4}
+
+
+def legal_rel(a_legal: pl.Series, b_legal: pl.Series) -> np.ndarray:
+    """legal_form (space-joined sorted legal words, "" if none) on each side -> LEGAL_REL code."""
+    ea, eb = (a_legal == "").to_numpy(), (b_legal == "").to_numpy()
+    eq = (a_legal == b_legal).to_numpy()
+    return np.select([ea & eb, eq, ea & ~eb, ~ea & eb], list(LEGAL_REL.values())[:4],
+                     LEGAL_REL["swapped"]).astype(np.int8)
+
+
+def cov(a_toks: pl.Series, b_toks: pl.Series) -> tuple[np.ndarray, np.ndarray]:
+    """(|a∩b|/|b|, |a∩b|/|a|) i.e. (cov_rec, cov_s1) for a token-list pair; 0 when the denominator side is empty."""
+    inter = a_toks.list.set_intersection(b_toks).list.len().to_numpy().astype(np.float64)
+    na, nb = a_toks.list.len().to_numpy().astype(np.float64), b_toks.list.len().to_numpy().astype(np.float64)
+    cov_rec = np.divide(inter, nb, out=np.zeros_like(inter), where=nb > 0)
+    cov_s1 = np.divide(inter, na, out=np.zeros_like(inter), where=na > 0)
+    return cov_rec.astype(np.float32), cov_s1.astype(np.float32)
+
+
+def s1_name_vocab(s1: pl.DataFrame) -> dict[str, frozenset[str]]:
+    """country -> frozenset of every S1 name token in that country (rec_name_novel's reference vocab)."""
+    v = s1.select("country", "name_toks").explode("name_toks").drop_nulls().unique()
+    return {c: frozenset(g["name_toks"].to_list()) for (c,), g in v.partition_by("country", as_dict=True).items()}
 
 
 def s1_name_dup(s1: pl.DataFrame) -> pl.DataFrame:
@@ -212,6 +241,53 @@ def num_rel(a_core: pl.Series, b_core: pl.Series, a_addr: pl.Series, b_addr: pl.
     return {"num_rel_class": cls, "num_rel_absdiff": absd, "num_rel_reldiff": reld}
 
 
+def rec_name_novel(b_toks: pl.Series, country: pl.Series, vocab: dict[str, frozenset[str]]) -> dict[str, np.ndarray]:
+    """rec_name_novel = share of the record's name tokens absent from its country's S1 vocab (0.0 if the record
+    has no name tokens); rec_name_all_novel = 1 iff every token is novel and the record has >= 1 token."""
+    novel = np.zeros(b_toks.len(), np.float32)
+    all_novel = np.zeros(b_toks.len(), np.int8)
+    for i, (toks, c) in enumerate(zip(b_toks.to_list(), country.to_list())):
+        if not toks:
+            continue
+        v = vocab.get(c, frozenset())
+        miss = sum(1 for t in toks if t not in v)
+        novel[i] = miss / len(toks)
+        all_novel[i] = int(miss == len(toks))
+    return {"rec_name_novel": novel, "rec_name_all_novel": all_novel}
+
+
+def num_range(a_ranges: pl.Series, b_ranges: pl.Series, a_num: pl.Series, b_num: pl.Series) -> dict[str, np.ndarray]:
+    """num_range_hit: 1 if either side's addr_number falls inside a "lo-hi" range parsed from the OTHER side's
+    raw address (both directions checked), else 0 (also 0 if neither side has a number or a range).
+    num_absdiff_bucket: |int(a_num) - int(b_num)| bucketed 0/1/2/3-5/6-10/11+ (int8 0..5), 6 if either side's
+    number is missing or non-numeric."""
+    n = a_num.len()
+    hit = np.zeros(n, np.int8)
+    bucket = np.full(n, 6, np.int8)  # 6 = missing/non-numeric
+
+    def in_range(x: str, ranges: list[str]) -> bool:
+        if not x or not x.isdigit():
+            return False
+        v = int(x)
+        for r in ranges:
+            lo, hi = (int(k) for k in r.split("-"))
+            if lo > hi:
+                lo, hi = hi, lo
+            if lo <= v <= hi:
+                return True
+        return False
+
+    def bucket_of(d: int) -> int:  # 0,1,2,3-5,6-10,11+ -> 0..5
+        return 0 if d == 0 else 1 if d == 1 else 2 if d == 2 else 3 if d <= 5 else 4 if d <= 10 else 5
+
+    for i, (ra, rb, na, nb) in enumerate(zip(a_ranges.to_list(), b_ranges.to_list(), a_num.to_list(), b_num.to_list())):
+        if in_range(nb, ra) or in_range(na, rb):
+            hit[i] = 1
+        if na.isdigit() and nb.isdigit():
+            bucket[i] = bucket_of(abs(int(na) - int(nb)))
+    return {"num_range_hit": hit, "num_absdiff_bucket": bucket}
+
+
 def unmatched_tokens(a_name: pl.Series, b_name: pl.Series, a_addr: pl.Series, b_addr: pl.Series,
                      country: pl.Series, idf_lookup: dict) -> dict[str, np.ndarray]:
     """Tokens (name+addr, lowercased, channel A/B matching = exact-token set difference) on either side not
@@ -259,8 +335,58 @@ def load_token_dict() -> dict | None:
     return dict(zip(d["s"].to_list(), d["t"].to_list()))
 
 
+def load_locality_dict() -> dict | None:
+    """{src_locality_token: tgt_locality_token}, or None if artifacts/interim/locality_alias.parquet is absent
+    (src.mine_dict not yet run for M5-4)."""
+    p = path("interim_dir") / "locality_alias.parquet"
+    if not p.exists():
+        return None
+    d = pl.read_parquet(p)
+    return dict(zip(d["s"].to_list(), d["t"].to_list()))
+
+
+def addr_tset_alias(a_addr_toks: pl.Series, b_addr_toks: pl.Series, loc_map: dict | None) -> np.ndarray:
+    """token_set_ratio of addr_tokens after remapping via loc_map; -1 sentinel if loc_map is None."""
+    n = a_addr_toks.len()
+    if loc_map is None:
+        return np.full(n, -1.0, np.float32)
+    def remap(toks: list[str]) -> str:
+        return " ".join(loc_map.get(t, t) for t in toks)
+    ra = [remap(x) for x in a_addr_toks.to_list()]
+    rb = [remap(x) for x in b_addr_toks.to_list()]
+    return _cp(ra, rb, fuzz.token_set_ratio)
+
+
+def locality_rel(a_addr_toks: pl.Series, b_addr_toks: pl.Series, loc_map: dict | None) -> np.ndarray:
+    """Per pair, over locality tokens only (those appearing as a source or target in loc_map, either side):
+    0 missing (neither side has a locality token), 1 equal (share >= 1 raw locality token), 2 alias (no raw
+    share, but share >= 1 after loc_map remap), 3 differ (locality tokens present both sides, no match even
+    after remap). loc_map None -> all missing (sentinel, consistent with addr_tset_alias)."""
+    n = a_addr_toks.len()
+    if not loc_map:
+        return np.zeros(n, np.int8)
+    keys = set(loc_map.keys()) | set(loc_map.values())
+    def locs(toks: list[str]) -> set[str]:
+        return {t for t in toks if t in keys}
+    def mapped(s: set[str]) -> set[str]:
+        return {loc_map.get(t, t) for t in s}
+    out = np.zeros(n, np.int8)
+    for i, (xa, xb) in enumerate(zip(a_addr_toks.to_list(), b_addr_toks.to_list())):
+        la, lb = locs(xa), locs(xb)
+        if not la and not lb:
+            out[i] = 0
+        elif la & lb:
+            out[i] = 1
+        elif mapped(la) & mapped(lb):
+            out[i] = 2
+        else:
+            out[i] = 3
+    return out
+
+
 def pair_features(c: pl.DataFrame, s1: pl.DataFrame, rec: pl.DataFrame, w: np.ndarray,
-                  idf_lookup: dict, dict_map: dict | None) -> pl.DataFrame:
+                  idf_lookup: dict, dict_map: dict | None, loc_map: dict | None,
+                  vocab: dict[str, frozenset[str]]) -> pl.DataFrame:
     a = c.select("s1_id").join(s1, left_on="s1_id", right_on="entity_id", how="left", maintain_order="left")
     b = c.select("rec_id").join(rec, left_on="rec_id", right_on="entity_id", how="left", maintain_order="left")
     assert a["core"].null_count() == 0 and b["core"].null_count() == 0, "candidate id missing from norm cache"
@@ -291,24 +417,43 @@ def pair_features(c: pl.DataFrame, s1: pl.DataFrame, rec: pl.DataFrame, w: np.nd
     f.update(unmatched_tokens(a["name_toks"], b["name_toks"], a["addr_toks"], b["addr_toks"],
                               a["country"], idf_lookup))
     f["name_tset_dict"] = name_tset_dict(a["core"], b["core"], dict_map)
+    # [alias] locality alias map (src.mine_dict §3)
+    f["addr_tset_alias"] = addr_tset_alias(a["addr_toks"], b["addr_toks"], loc_map)
+    f["locality_rel"] = locality_rel(a["addr_toks"], b["addr_toks"], loc_map)
+    # [cov] token-set coverage, name + address
+    f["cov_addr_rec"], f["cov_addr_s1"] = cov(a["addr_toks"], b["addr_toks"])
+    f["cov_name_rec"], f["cov_name_s1"] = cov(a["name_toks"], b["name_toks"])
+    addr_len_a, addr_len_b = a["addr_toks"].list.len().to_numpy(), b["addr_toks"].list.len().to_numpy()
+    lo, hi = np.minimum(addr_len_a, addr_len_b), np.maximum(addr_len_a, addr_len_b)
+    f["addr_len_ratio"] = np.divide(lo, hi, out=np.ones_like(lo, np.float32), where=hi > 0).astype(np.float32)
+    # [num] number-range parse (raw address only; addr_tokens loses the hyphen)
+    f.update(num_range(a["ranges"], b["ranges"], a["num"], b["num"]))
+    # [novel] record name tokens absent from the country's S1 vocab
+    f.update(rec_name_novel(b["name_toks"], b["country"], vocab))
+    # [legal] legal-form presence/relation
+    f["legal_s1_has"] = (a["legal"] != "").cast(pl.Int8).to_numpy()
+    f["legal_rec_has"] = (b["legal"] != "").cast(pl.Int8).to_numpy()
+    f["legal_rel"] = legal_rel(a["legal"], b["legal"])
     sib = [col for col in SIB_COLS if col in c.columns]
     return pl.concat([c.select(*ID_COLS, id_key("s1_id").alias("s1k"), id_key("rec_id").alias("reck"),
                                *RANK_COLS, "n_channels_hit", *sib),
                       pl.DataFrame(f)], how="horizontal_extend")
 
 
-def relative(keys: pl.DataFrame, v: pl.Series) -> pl.DataFrame:
+def relative(keys: pl.DataFrame, v: pl.Series, s1_side: bool = True) -> pl.DataFrame:
+    """s1_side=False skips *_ds1/*_rks1 (cv_full.context: whole-S1 removal cannot change them)."""
     c, x, mr = v.name, pl.col("_v"), pl.col("_mr")
+    s1 = ([(x - x.max().over("s1k")).alias(f"{c}_ds1"),
+           x.rank("min", descending=True).over("s1k").cast(pl.Int32).alias(f"{c}_rks1")] if s1_side else [None, None])
     # numpy-built columns carry NaN, not null: NaN survives fill_null and polars ranks it above every value
+    cols = [(x - mr).alias(f"{c}_drec"), s1[0],
+            x.rank("min", descending=True).over("reck").cast(pl.Int32).alias(f"{c}_rkrec"), s1[1],
+            (x - pl.when((x == mr) & (pl.col("_tie") == 1)).then(pl.col("_m2")).otherwise(mr)).alias(f"{c}_gaprec")]
     return (keys.with_columns(_v=v.fill_nan(None).fill_null(0))
-            .with_columns(_mr=x.max().over("reck"), _ms=x.max().over("s1k"))
+            .with_columns(_mr=x.max().over("reck"))
             .with_columns(_m2=pl.when(x < mr).then(x).max().over("reck").fill_null(0),  # 0 = no other candidate
                           _tie=(x == mr).sum().over("reck"))
-            .select((x - mr).alias(f"{c}_drec"), (x - pl.col("_ms")).alias(f"{c}_ds1"),
-                    x.rank("min", descending=True).over("reck").cast(pl.Int32).alias(f"{c}_rkrec"),
-                    x.rank("min", descending=True).over("s1k").cast(pl.Int32).alias(f"{c}_rks1"),
-                    (x - pl.when((x == mr) & (pl.col("_tie") == 1)).then(pl.col("_m2")).otherwise(mr))
-                    .alias(f"{c}_gaprec")))
+            .select([e for e in cols if e is not None]))
 
 
 def main() -> None:
@@ -326,9 +471,11 @@ def main() -> None:
     log("idf vocab", n_tokens=len(w))
     idf_lookup = dict(zip(zip(voc["A"]["country"].to_list(), voc["A"]["tok"].to_list()), voc["A"]["w"].to_list()))
     dict_map = load_token_dict()
+    loc_map = load_locality_dict()
     s1 = entities(a.split, 1, voc, lnn)
     dup = s1_name_dup(s1.select("entity_id", "country", "core"))
     s1 = s1.join(dup, on="entity_id", how="left", maintain_order="left")
+    s1_vocab = s1_name_vocab(s1.select("country", "name_toks"))
     log("S1 entities", rows=s1.height)
     rec = pl.concat([entities(a.split, n, voc, lnn) for n in (2, 3)])
     del voc
@@ -344,7 +491,7 @@ def main() -> None:
         if a.smoke:
             c = c.head(a.smoke - done)
         p = base_dir / f"part-{i:05d}.parquet"
-        pair_features(c, s1, rec, w, idf_lookup, dict_map).write_parquet(p)
+        pair_features(c, s1, rec, w, idf_lookup, dict_map, loc_map, s1_vocab).write_parquet(p)
         parts.append(p)
         done += c.height
         log(f"pass1 part {i}", rows=c.height, total=done)
@@ -362,6 +509,13 @@ def main() -> None:
         rec_name_hits95=(pl.col("name_tset") >= 95).sum().over("reck").cast(pl.Int32))
     tset95.write_parquet(rel_dir / "_tset95.parquet")
     rel_files.append(rel_dir / "_tset95.parquet")
+    # [twin] other candidates of the record that are themselves a near-duplicate match (name_tset>=95 AND
+    # addr_tset>=90); self excluded, so a lone candidate meeting both gets 0.
+    is_twin = column(["reck", "name_tset", "addr_tset"]).select(
+        "reck", twin=(pl.col("name_tset") >= 95) & (pl.col("addr_tset").fill_nan(None).fill_null(-1) >= 90))
+    twin = is_twin.select(twin_hits=(pl.col("twin").sum().over("reck").cast(pl.Int32) - pl.col("twin").cast(pl.Int32)))
+    twin.write_parquet(rel_dir / "_twin.parquet")
+    rel_files.append(rel_dir / "_twin.parquet")
     for col in REL_COLS:
         relative(keys, column([col])[col]).write_parquet(rel_dir / f"{col}.parquet")
         rel_files.append(rel_dir / f"{col}.parquet")

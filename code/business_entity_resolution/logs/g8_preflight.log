@@ -1,0 +1,27 @@
+/Users/arnav/amlc2026/code/business_entity_resolution/src/cv_full.py:183: DeprecationWarning: In Polars 2.0, the default behavior for `empty_as_null` will change to `False`. To keep the current behavior, explicitly set `empty_as_null=True`.
+  voc = s1e.select("country", tok="name_tokens").explode("tok").drop_nulls().unique().with_columns(_in=pl.lit(True))
+/Users/arnav/amlc2026/code/business_entity_resolution/src/cv_full.py:186: DeprecationWarning: In Polars 2.0, the default behavior for `empty_as_null` will change to `False`. To keep the current behavior, explicitly set `empty_as_null=True`.
+  x = (rec.select(reck=id_key("entity_id"), country="country", tok="name_tokens").explode("tok")
+{'step': 'preflight meta', 's': 15.5, 'peak_rss_mb': 2258, 'frac': 0.05, 'rows': 4964040, 's1': 110341}
+{'step': 'context train fold0', 's': 76.0, 'peak_rss_mb': 11037, 'kept_rows': 80417557, 'removed_rows': 18861948, 'cols': 29}
+{'step': 'preflight fit', 's': 16.4, 'peak_rss_mb': 11037, 'frac': 0.05}
+PREFLIGHT_POINT {"frac": 0.05, "s1": 110341, "meta_rows": 4964040, "train_rows": 864958, "secs": 107.93501620797906, "fit_s_per_round": 0.04203001833986491, "peak_rss_mb": 11037}
+/Users/arnav/amlc2026/code/business_entity_resolution/src/cv_full.py:183: DeprecationWarning: In Polars 2.0, the default behavior for `empty_as_null` will change to `False`. To keep the current behavior, explicitly set `empty_as_null=True`.
+  voc = s1e.select("country", tok="name_tokens").explode("tok").drop_nulls().unique().with_columns(_in=pl.lit(True))
+/Users/arnav/amlc2026/code/business_entity_resolution/src/cv_full.py:186: DeprecationWarning: In Polars 2.0, the default behavior for `empty_as_null` will change to `False`. To keep the current behavior, explicitly set `empty_as_null=True`.
+  x = (rec.select(reck=id_key("entity_id"), country="country", tok="name_tokens").explode("tok")
+{'step': 'preflight meta', 's': 14.9, 'peak_rss_mb': 2673, 'frac': 0.2, 'rows': 19855645, 's1': 441364}
+{'step': 'context train fold0', 's': 78.0, 'peak_rss_mb': 10295, 'kept_rows': 80417557, 'removed_rows': 18861948, 'cols': 29}
+{'step': 'preflight fit', 's': 23.9, 'peak_rss_mb': 10295, 'frac': 0.2}
+PREFLIGHT_POINT {"frac": 0.2, "s1": 441364, "meta_rows": 19855645, "train_rows": 3456753, "secs": 116.78578612499405, "fit_s_per_round": 0.09543868415988982, "peak_rss_mb": 10295}
+
+ frac        S1  train_rows     secs fit_s/round peak_rss_mb
+ 0.05    110341      864958    107.9       0.042       11037
+ 0.20    441364     3456753    116.8       0.095       10295
+fit peak_rss_mb     = 1.128e+04 + -4947 * frac  -> at frac 1: 6338
+fit secs            = 105 + 59.01 * frac  -> at frac 1: 164
+fit fit_s_per_round = 0.02423 + 0.3561 * frac  -> at frac 1: 0.3803
+fit train_rows      = 1026 + 1.728e+07 * frac  -> at frac 1: 1.728e+07
+
+extrapolated full run (5 folds, 100% S1): peak RSS ~6338 MB (guard 20000), ~17.3M train rows/fold, time ~14 min at 50 rounds/fold + 0.38 s per extra round per fold + OOF predict
+{'step': 'preflight done', 's': 226.7, 'peak_rss_mb': 204, 'peak_rss_mb_at1': 6337.666666666659, 'secs_at1': 163.98989234907384, 'fit_s_per_round_at1': 0.3802849018666893, 'train_rows_at1': 17279659.666666664}

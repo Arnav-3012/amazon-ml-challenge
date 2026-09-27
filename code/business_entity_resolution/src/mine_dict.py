@@ -17,13 +17,26 @@ Vocab miss (proxy for D0-1 "vocab") = missed pair sharing no name (A) or addr (B
 (C skeleton / X composite channels ignored; the full-data proxy count is printed next to D0-1's 106,630).
 After the dict: shares >= 1 token (any df), and >= 1 surviving token (df <= cap, df of the token as it is today).
 
+3) locality: address-token alias map (src.features.locality_rel/addr_tset_alias consume it), mined separately
+   from native/abbr -- gated on STRONG pairs (street+number agree, or addr_tset >= LOC_TSET), not on the
+   native/abbr unshared-token setup. Leak guard: mined only on hash(s1_id, seed=42) % 5 != 0 (80% of train S1s,
+   same split as everything else here); the other 20% is held out for the lift check below, never mined on.
+   Differing (S1 locality token or adjacent bigram, record locality token/bigram) pairs, symmetric (each
+   direction mined independently, both kept). Keep if support >= LOC_SUPPORT and share >= LOC_SHARE (same
+   top1() machinery). If holdout lift (mean addr_tset_alias - addr_tset on aliased-hit pairs) is < 50% of the
+   mined-set lift, LOC_SUPPORT is raised to 60 and mining reruns once.
+
 Run from code/business_entity_resolution/:  python -m src.mine_dict
--> artifacts/interim/token_dict.parquet (field, kind, s, t, co, n_src, share) + docs/mine_dict.md
+-> artifacts/interim/token_dict.parquet (field, kind, s, t, co, n_src, share)
+-> artifacts/interim/locality_alias.parquet (s, t, co, n_src, share)
+-> docs/mine_dict.md
 """
 import numpy as np
 import polars as pl
+from rapidfuzz import fuzz
+from rapidfuzz.process import cpdist
 
-from .block import norm_path
+from .block import _bigrams, norm_path
 from .decide import md
 from .io import CFG, ROOT, StepLog, load_gt_pairs, path
 
@@ -34,6 +47,9 @@ FIELDS = {"name": "A", "addr": "B"}  # field -> blocking channel holding its tok
 OUT = path("interim_dir") / "token_dict.parquet"
 REPORT = ROOT / "docs" / "mine_dict.md"
 ALPHA = r"^[a-z]+$"
+
+LOC_SUPPORT, LOC_SHARE, LOC_TSET = 30, 0.6, 80  # task spec; LOC_SUPPORT retried at 60 if holdout lift too weak
+LOC_OUT = path("interim_dir") / "locality_alias.parquet"
 
 
 def sides() -> tuple[pl.DataFrame, pl.DataFrame, pl.Series]:
@@ -118,6 +134,75 @@ def mine_abbr(m: pl.DataFrame) -> pl.DataFrame:
     return x.filter(keep).with_columns(kind=pl.lit("abbr"))
 
 
+def loc_split(ids: pl.Series) -> tuple[pl.Series, pl.Series]:
+    """80/20 train-S1 split for locality mining, hash(s1_id, seed=42) % 5 != 0 (deterministic, no RNG state)."""
+    h = ids.hash(seed=CFG["seed"])
+    return ids.filter(h % 5 != 0), ids.filter(h % 5 == 0)
+
+
+def loc_pairs() -> pl.DataFrame:
+    """One row per true train pair with addr_tokens both sides + addr_tset, street_core, addr_number, s1_id."""
+    s1 = pl.read_parquet(norm_path("train", 1),
+                         columns=["entity_id", "addr_tokens", "addr_number", "addr_street_core"])
+    a = s1.select("entity_id", a_tok="addr_tokens", a_num="addr_number", a_street="addr_street_core")
+    rec = pl.concat([pl.read_parquet(norm_path("train", n),
+                                     columns=["entity_id", "addr_tokens", "addr_number", "addr_street_core"])
+                     for n in (2, 3)])
+    b = rec.select(rec_id="entity_id", b_tok="addr_tokens", b_num="addr_number", b_street="addr_street_core")
+    p = (load_gt_pairs().select("s1_id", rec_id="match_id")
+         .join(a, left_on="s1_id", right_on="entity_id").join(b, on="rec_id"))
+    n1, n2 = p["a_tok"].list.join(" ").to_list(), p["b_tok"].list.join(" ").to_list()
+    tset = cpdist(n1, n2, scorer=fuzz.token_set_ratio, workers=-1, dtype=np.float32)  # row-aligned, not full cdist
+    return p.with_columns(addr_tset=pl.Series(tset),
+                          strong=(pl.col("a_street") == pl.col("b_street")) & (pl.col("a_num") == pl.col("b_num"))
+                          & (pl.col("a_street") != ""))
+
+
+def locality_toks(tok: pl.Series) -> pl.Series:
+    """Unique unigrams + adjacent bigrams of an addr_tokens list (bigram key = block._bigrams, sorted-word form)."""
+    return pl.concat_list(tok, _bigrams(tok)).list.unique()
+
+
+def mine_locality(p: pl.DataFrame, support: int) -> pl.DataFrame:
+    """(s, t) locality alias pairs, symmetric: mined independently a->b and b->a, both kept.
+    strong = street+number agree, or addr_tset >= LOC_TSET (loc_pairs marks `strong`; addr_tset >= LOC_TSET
+    is applied here since it's a threshold, not a boolean column)."""
+    q = p.filter(pl.col("strong") | (pl.col("addr_tset") >= LOC_TSET))
+    q = q.with_columns(a_addr=locality_toks(q["a_tok"]), b_addr=locality_toks(q["b_tok"])).with_row_index("pid")
+    return pl.concat([top1(unshared(q, "addr", "a", "s"), unshared(q, "addr", "b", "t"), ["pid"]),
+                      top1(unshared(q, "addr", "b", "s"), unshared(q, "addr", "a", "t"), ["pid"])]
+                     ).filter(pl.col("co") >= support)
+
+
+def apply_locality(a_tok: pl.Series, b_tok: pl.Series, d: pl.DataFrame) -> np.ndarray:
+    """addr_tset recomputed after mapping both sides' locality tokens through d {s: t}; -1.0 sentinel if d empty."""
+    if d.height == 0:
+        return np.full(a_tok.len(), -1.0, np.float32)
+    m = dict(d.select("s", "t").iter_rows())
+    ra = a_tok.list.eval(pl.element().replace(m)).list.join(" ").to_list()
+    rb = b_tok.list.eval(pl.element().replace(m)).list.join(" ").to_list()
+    return cpdist(ra, rb, scorer=fuzz.token_set_ratio, workers=-1, dtype=np.float32)
+
+
+def locality_lift(p: pl.DataFrame, d: pl.DataFrame, held: pl.Series) -> tuple[float, float, dict]:
+    """mean(addr_tset_alias - addr_tset) on rows whose alias mapping actually changes a token, split by held.
+    Returns (mined_set_lift, holdout_lift, top30-sample dict) for the report / the 50% retry check."""
+    if d.height == 0:
+        return 0.0, 0.0, {}
+    m = d["s"].to_list()
+    p = p.with_columns(hit=(pl.col("a_tok").list.eval(pl.element().is_in(m)).list.any()
+                            | pl.col("b_tok").list.eval(pl.element().is_in(m)).list.any()))
+    hitp = p.filter("hit")
+    alias = apply_locality(hitp["a_tok"], hitp["b_tok"], d)
+    hitp = hitp.with_columns(addr_tset_alias=pl.Series(alias), lift=pl.Series(alias) - pl.col("addr_tset"))
+    hitp = hitp.with_columns(held=pl.col("s1_id").is_in(held.implode()))
+    mined = hitp.filter(~pl.col("held"))
+    hold = hitp.filter("held")
+    return (float(mined["lift"].mean()) if mined.height else 0.0,
+            float(hold["lift"].mean()) if hold.height else 0.0,
+            {"mined_hit_rows": mined.height, "holdout_hit_rows": hold.height})
+
+
 def apply(p: pl.DataFrame, d: pl.DataFrame) -> pl.DataFrame:
     """Canonicalise both sides of every pair with the field's map (single pass, no chaining)."""
     for f in FIELDS:
@@ -197,6 +282,29 @@ def main() -> None:
                      "median share": float(np.median(sh)) if sh.size else float("nan")})
     sample = pl.concat([d.filter(pl.col("kind") == k).sort("co", descending=True).head(15) for k in ("native", "abbr")])
 
+    # ---- locality alias map (independent mining/eval; see module docstring §3) ----
+    lp = loc_pairs()
+    mine_ids, loc_held = loc_split(lp["s1_id"].unique())
+    lp_mine = lp.filter(pl.col("s1_id").is_in(mine_ids.implode()))
+    log("locality pairs", rows=lp.height, mine_s1=mine_ids.len(), held_s1=loc_held.len(),
+        strong=int(lp_mine["strong"].sum()), strong_or_tset80=int((lp_mine["strong"] | (lp_mine["addr_tset"] >= LOC_TSET)).sum()))
+
+    loc_support = LOC_SUPPORT
+    loc_d = mine_locality(lp_mine, loc_support)
+    loc_d = loc_d.filter(pl.col("share") >= LOC_SHARE).select("s", "t", "co", "n_src", "share")
+    mined_lift, hold_lift, lift_meta = locality_lift(lp, loc_d, loc_held)
+    log("locality dict", mappings=loc_d.height, support=loc_support, mined_lift=round(mined_lift, 3),
+        holdout_lift=round(hold_lift, 3), **lift_meta)
+    if mined_lift > 0 and hold_lift < 0.5 * mined_lift:
+        loc_support = 60
+        loc_d = mine_locality(lp_mine, loc_support).filter(pl.col("share") >= LOC_SHARE).select(
+            "s", "t", "co", "n_src", "share")
+        mined_lift, hold_lift, lift_meta = locality_lift(lp, loc_d, loc_held)
+        log("locality dict (retry support=60)", mappings=loc_d.height, mined_lift=round(mined_lift, 3),
+            holdout_lift=round(hold_lift, 3), **lift_meta)
+    loc_d.write_parquet(LOC_OUT)
+    loc_sample = loc_d.sort("co", descending=True).head(30)
+
     L = ["# Token dictionary probe (src/mine_dict.py)", "",
          f"Mined on 80% of train S1s' true pairs; evaluated on the missed pairs (not in candidates_train_v1) of the "
          f"held-out 20%. Keep: top-1 co >= {SUPPORT} and share >= {SHARE}. Vocab proxy = no shared name/addr token "
@@ -205,7 +313,14 @@ def main() -> None:
          f"**Mappings:** {d.height:,} (native {dicts['native'].height:,}, abbr {dicts['abbr'].height:,}).", "",
          "## Is it deterministic? top-1 share over sources with co >= 20", "", *md(dist), "",
          "## KEY: held-out misses that share a token after the dict", "", *md(rows), "",
-         "## 30 sample mappings (top co per kind)", "", *md(sample.to_dicts()), ""]
+         "## 30 sample mappings (top co per kind)", "", *md(sample.to_dicts()), "",
+         "## Locality alias map (src/mine_dict.py §3)", "",
+         f"Mined on hash(s1_id, seed={CFG['seed']}) % 5 != 0 (80% of train S1s); support >= {loc_support}, "
+         f"share >= {LOC_SHARE}, gated on street+number agreement or addr_tset >= {LOC_TSET}. "
+         f"**Mappings:** {loc_d.height:,}. Lift (mean addr_tset_alias - addr_tset on rows an alias touches): "
+         f"mined-set {mined_lift:+.2f}, holdout {hold_lift:+.2f} "
+         f"({'OK' if mined_lift <= 0 or hold_lift >= 0.5 * mined_lift else 'BELOW 50% of mined-set lift'}).", "",
+         "## 30 sample locality mappings (top co)", "", *md(loc_sample.to_dicts()), ""]
     REPORT.write_text("\n".join(L))
     log("report", path=str(REPORT))
     log.dump(path("interim_dir") / "mine_dict_timing.json")

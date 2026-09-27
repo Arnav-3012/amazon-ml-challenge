@@ -1,0 +1,18 @@
+{'step': 'world', 's': 1.2, 'peak_rss_mb': 1685, 'n_s1': 1787525, 'kept': 5838131, 'in_cand': 5958189, 'f05': 0.974585}
+{'step': 'sample pairs', 's': 1.2, 'peak_rss_mb': 2905, 'n_s1': 357505, 'pairs': 1243927, 'TP': 1163028, 'FP': 5625, 'FN': 29571, 'miss': 45703}
+{'step': 'tagged', 's': 9.8, 'peak_rss_mb': 8591}
+{'step': 'd2 pseudo_brand', 's': 6.5, 'peak_rss_mb': 8591, 'pairs': 86785, 'cand_rows': 372277}
+{'step': 'd2 legal/distractor', 's': 18.9, 'peak_rss_mb': 8591, 'n': 304672}
+{'step': 'precision records', 's': 10.0, 'peak_rss_mb': 8591, 'records': 2048020, 'confident': 5687188}
+{'step': 'precision part 0', 's': 23.9, 'peak_rss_mb': 8591, 'pairs': 3465833}
+{'step': 'precision part 1', 's': 23.7, 'peak_rss_mb': 9191, 'pairs': 3478912}
+{'step': 'precision part 2', 's': 23.7, 'peak_rss_mb': 9462, 'pairs': 3457540}
+{'step': 'precision part 3', 's': 23.8, 'peak_rss_mb': 9462, 'pairs': 3481128}
+{'step': 'precision part 4', 's': 23.7, 'peak_rss_mb': 9462, 'pairs': 3455730}
+{'step': 'precision part 5', 's': 23.9, 'peak_rss_mb': 9575, 'pairs': 3471863}
+{'step': 'precision part 6', 's': 23.7, 'peak_rss_mb': 9575, 'pairs': 3455616}
+{'step': 'precision part 7', 's': 23.7, 'peak_rss_mb': 9575, 'pairs': 3468934}
+{'step': 'precision part 8', 's': 23.7, 'peak_rss_mb': 9575, 'pairs': 3459471}
+{'step': 'precision part 9', 's': 23.6, 'peak_rss_mb': 9575, 'pairs': 3455057}
+{'step': 'report', 's': 0.5, 'peak_rss_mb': 10191, 'path': '/Users/arnav/amlc2026/docs/mechanisms.md'}
+ABORT src.mechanisms: peak RSS 10191 MB > 10000 MB (6 GB limit) at 'report'. Nothing written; lower CHUNK or raise NP.

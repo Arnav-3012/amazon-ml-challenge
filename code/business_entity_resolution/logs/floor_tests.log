@@ -1,0 +1,22 @@
+{'step': 'world', 's': 1.3, 'peak_rss_mb': 1659, 'n_s1': 1787525, 'kept': 5838131, 'in_cand': 5958189, 'f05': 0.974585}
+{'step': 'sample pairs', 's': 1.1, 'peak_rss_mb': 2200, 'n_s1': 357505, 'pairs': 1243927, 'TP': 1163028, 'FP': 5625, 'FN': 29571, 'miss': 45703}
+{'step': 'populations', 's': 1.4, 'peak_rss_mb': 4642, 'A FN/miss': 28609, 'B FN/miss': 17529, 'A TP': 25793, 'B TP': 50000, 'pool': 1787525, 'dict_size': 554}
+{'step': 'h1 ties', 's': 2.2, 'peak_rss_mb': 4642, 'scope': 57103, 'tie_rows': 2497866, 'conf': 5687188}
+{'step': 'h1 part 0', 's': 0.5, 'peak_rss_mb': 4642, 'rows': 315104}
+{'step': 'h1 part 1', 's': 0.4, 'peak_rss_mb': 4642, 'rows': 311636}
+{'step': 'h1 part 2', 's': 0.4, 'peak_rss_mb': 4642, 'rows': 307134}
+{'step': 'h1 part 3', 's': 0.4, 'peak_rss_mb': 4678, 'rows': 315222}
+{'step': 'h1 part 4', 's': 0.5, 'peak_rss_mb': 4734, 'rows': 310021}
+{'step': 'h1 part 5', 's': 0.5, 'peak_rss_mb': 4734, 'rows': 320351}
+{'step': 'h1 part 6', 's': 0.5, 'peak_rss_mb': 4745, 'rows': 314479}
+{'step': 'h1 part 7', 's': 0.4, 'peak_rss_mb': 4775, 'rows': 303919}
+{'step': 'h1 per-feature', 's': 0.6, 'peak_rss_mb': 4775}
+{'step': 'ranker fold 0', 's': 4.2, 'peak_rss_mb': 4775, 'train': 1998292}
+{'step': 'ranker fold 1', 's': 4.1, 'peak_rss_mb': 4775, 'train': 1998292}
+{'step': 'ranker fold 2', 's': 4.1, 'peak_rss_mb': 4775, 'train': 1998292}
+{'step': 'ranker fold 3', 's': 4.2, 'peak_rss_mb': 4775, 'train': 1998294}
+{'step': 'ranker fold 4', 's': 4.1, 'peak_rss_mb': 4775, 'train': 1998294}
+{'step': 'h2 train', 's': 0.5, 'peak_rss_mb': 4775, 'pool': 2206821, 'empty': 344883}
+{'step': 'h2 test', 's': 0.5, 'peak_rss_mb': 4775, 'pool': 1732544, 'empty': 265506}
+{'step': 'h3', 's': 1.2, 'peak_rss_mb': 4775}
+{'step': 'report', 's': 0.1, 'peak_rss_mb': 4775, 'path': '/Users/arnav/amlc2026/docs/floor_tests.md'}

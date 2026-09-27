@@ -1,0 +1,70 @@
+{'step': 'meta', 's': 16.6, 'peak_rss_mb': 5005, 'rows': 99279505, 's1': 2206821, 'pos': 7507121, 'n_feats': 93}
+/Users/arnav/amlc2026/code/business_entity_resolution/src/cv_full.py:183: DeprecationWarning: In Polars 2.0, the default behavior for `empty_as_null` will change to `False`. To keep the current behavior, explicitly set `empty_as_null=True`.
+  voc = s1e.select("country", tok="name_tokens").explode("tok").drop_nulls().unique().with_columns(_in=pl.lit(True))
+/Users/arnav/amlc2026/code/business_entity_resolution/src/cv_full.py:186: DeprecationWarning: In Polars 2.0, the default behavior for `empty_as_null` will change to `False`. To keep the current behavior, explicitly set `empty_as_null=True`.
+  x = (rec.select(reck=id_key("entity_id"), country="country", tok="name_tokens").explode("tok")
+{'step': 'context train fold0', 's': 86.9, 'peak_rss_mb': 10407, 'kept_rows': 80417557, 'removed_rows': 18861948, 'cols': 29}
+{'step': 'fold 0 data', 's': 69.3, 'peak_rss_mb': 10834, 'train_rows': 17254243, 'train_pos': 4378233, 'valid_rows': 6432680, 'train_s1': 1286912, 'dropped_s1': 419296, 'weighted_rows': 6308660, 'ext_rows_kept': 1349662}
+[100]	heldout's binary_logloss: 0.00777794
+[200]	heldout's binary_logloss: 0.00681485
+[300]	heldout's binary_logloss: 0.00654058
+[400]	heldout's binary_logloss: 0.00640919
+[500]	heldout's binary_logloss: 0.00634899
+[600]	heldout's binary_logloss: 0.00631235
+[700]	heldout's binary_logloss: 0.0062815
+[800]	heldout's binary_logloss: 0.00626715
+{'step': 'fold 0 fit', 's': 283.4, 'peak_rss_mb': 10834, 'fold': 0, 'best_iter': 787, 'train_rows': 17254243, 'valid_rows': 6432680, 'valid_logloss': 0.006264444266950776}
+{'step': 'context train fold1', 's': 82.8, 'peak_rss_mb': 11869, 'kept_rows': 80416975, 'removed_rows': 18862530, 'cols': 29}
+{'step': 'fold 1 data', 's': 72.9, 'peak_rss_mb': 11869, 'train_rows': 17257203, 'train_pos': 4378436, 'valid_rows': 6434038, 'train_s1': 1287149, 'dropped_s1': 419296, 'weighted_rows': 6311113, 'ext_rows_kept': 1345607}
+[100]	heldout's binary_logloss: 0.00769027
+[200]	heldout's binary_logloss: 0.00672114
+[300]	heldout's binary_logloss: 0.00647285
+[400]	heldout's binary_logloss: 0.00634204
+[500]	heldout's binary_logloss: 0.00627166
+[600]	heldout's binary_logloss: 0.00624911
+[700]	heldout's binary_logloss: 0.00622123
+[800]	heldout's binary_logloss: 0.00620896
+[900]	heldout's binary_logloss: 0.00619599
+{'step': 'fold 1 fit', 's': 289.1, 'peak_rss_mb': 11869, 'fold': 1, 'best_iter': 897, 'train_rows': 17257203, 'valid_rows': 6434038, 'valid_logloss': 0.006193247533609762}
+{'step': 'context train fold2', 's': 81.4, 'peak_rss_mb': 11869, 'kept_rows': 80416715, 'removed_rows': 18862790, 'cols': 29}
+{'step': 'fold 2 data', 's': 69.3, 'peak_rss_mb': 11869, 'train_rows': 17260126, 'train_pos': 4379857, 'valid_rows': 6433957, 'train_s1': 1287176, 'dropped_s1': 419296, 'weighted_rows': 6310483, 'ext_rows_kept': 1347554}
+[100]	heldout's binary_logloss: 0.00770594
+[200]	heldout's binary_logloss: 0.0067508
+[300]	heldout's binary_logloss: 0.00648253
+[400]	heldout's binary_logloss: 0.00636689
+[500]	heldout's binary_logloss: 0.00632041
+[600]	heldout's binary_logloss: 0.00627378
+[700]	heldout's binary_logloss: 0.00624821
+[800]	heldout's binary_logloss: 0.00624645
+{'step': 'fold 2 fit', 's': 266.4, 'peak_rss_mb': 11869, 'fold': 2, 'best_iter': 769, 'train_rows': 17260126, 'valid_rows': 6433957, 'valid_logloss': 0.006240239251678462}
+{'step': 'context train fold3', 's': 82.0, 'peak_rss_mb': 12143, 'kept_rows': 80416078, 'removed_rows': 18863427, 'cols': 29}
+{'step': 'fold 3 data', 's': 70.3, 'peak_rss_mb': 12143, 'train_rows': 17255564, 'train_pos': 4378200, 'valid_rows': 6433066, 'train_s1': 1286960, 'dropped_s1': 419296, 'weighted_rows': 6310064, 'ext_rows_kept': 1345546}
+[100]	heldout's binary_logloss: 0.00777183
+[200]	heldout's binary_logloss: 0.00679844
+[300]	heldout's binary_logloss: 0.00651403
+[400]	heldout's binary_logloss: 0.0063922
+[500]	heldout's binary_logloss: 0.00634246
+[600]	heldout's binary_logloss: 0.00631033
+[700]	heldout's binary_logloss: 0.0062757
+[800]	heldout's binary_logloss: 0.00625589
+[900]	heldout's binary_logloss: 0.00625851
+[1000]	heldout's binary_logloss: 0.00625501
+{'step': 'fold 3 fit', 's': 333.7, 'peak_rss_mb': 12143, 'fold': 3, 'best_iter': 979, 'train_rows': 17255564, 'valid_rows': 6433066, 'valid_logloss': 0.006247720658219359}
+{'step': 'context train fold4', 's': 81.4, 'peak_rss_mb': 12143, 'kept_rows': 80416095, 'removed_rows': 18863410, 'cols': 29}
+{'step': 'fold 4 data', 's': 71.1, 'peak_rss_mb': 12143, 'train_rows': 17259701, 'train_pos': 4378354, 'valid_rows': 6432901, 'train_s1': 1286990, 'dropped_s1': 419296, 'weighted_rows': 6313816, 'ext_rows_kept': 1347305}
+[100]	heldout's binary_logloss: 0.00776758
+[200]	heldout's binary_logloss: 0.00681086
+[300]	heldout's binary_logloss: 0.00656058
+[400]	heldout's binary_logloss: 0.00643123
+[500]	heldout's binary_logloss: 0.00635563
+[600]	heldout's binary_logloss: 0.00632386
+[700]	heldout's binary_logloss: 0.00629836
+[800]	heldout's binary_logloss: 0.00628495
+[900]	heldout's binary_logloss: 0.00628281
+{'step': 'fold 4 fit', 's': 290.6, 'peak_rss_mb': 12143, 'fold': 4, 'best_iter': 833, 'train_rows': 17259701, 'valid_rows': 6432901, 'valid_logloss': 0.006273954151209838}
+{'step': 'OOF (a) predicted', 's': 547.6, 'peak_rss_mb': 12143}
+{'step': 'context train eval', 's': 88.7, 'peak_rss_mb': 12143, 'kept_rows': 80416130, 'removed_rows': 18863375, 'cols': 29}
+{'step': 'OOF (b) predicted', 's': 457.5, 'peak_rss_mb': 13751}
+a_standard {'best_t': 0.72, 'macro_f05': 0.9817490662993404, 'n_s1': 2206821, 'f05_singleton': 0.9794396618173262, 'f05_nonsingleton': 0.9818856715623138, 'f05_India': 0.9769901702712414, 'f05_US': 0.9849244176733725, 'pred_matches_per_s1': 3.3275893241907704, 'fp_pairs': 34640, 'logloss': 0.00582144083455205}
+b_test_density {'best_t': 0.76, 'macro_f05': 0.9805849879544088, 'n_s1': 1787525, 'f05_singleton': 0.975966740132238, 'f05_nonsingleton': 0.9808581361038835, 'f05_India': 0.9756877082988237, 'f05_US': 0.9838541507474384, 'pred_matches_per_s1': 3.3275568173871695, 'fp_pairs': 34016, 'logloss': 0.0062433406710624695, 'f05_at_a_t': 0.9804741866844893}
+{'step': 'scored', 's': 42.2, 'peak_rss_mb': 14357, 'a': 0.98175, 'b': 0.98058}

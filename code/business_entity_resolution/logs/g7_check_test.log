@@ -1,0 +1,6 @@
+/Users/arnav/amlc2026/code/business_entity_resolution/src/cv_full.py:183: DeprecationWarning: In Polars 2.0, the default behavior for `empty_as_null` will change to `False`. To keep the current behavior, explicitly set `empty_as_null=True`.
+  voc = s1e.select("country", tok="name_tokens").explode("tok").drop_nulls().unique().with_columns(_in=pl.lit(True))
+/Users/arnav/amlc2026/code/business_entity_resolution/src/cv_full.py:186: DeprecationWarning: In Polars 2.0, the default behavior for `empty_as_null` will change to `False`. To keep the current behavior, explicitly set `empty_as_null=True`.
+  x = (rec.select(reck=id_key("entity_id"), country="country", tok="name_tokens").explode("tok")
+{'step': 'context test check_test', 's': 69.0, 'peak_rss_mb': 9823, 'kept_rows': 77949788, 'removed_rows': 0, 'cols': 29}
+{'step': 'check OK', 's': 5.0, 'peak_rss_mb': 9823, 'split': 'test', 'columns': 29, 'missing': []}

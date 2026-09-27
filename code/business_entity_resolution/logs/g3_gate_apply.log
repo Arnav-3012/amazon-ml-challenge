@@ -1,0 +1,8 @@
+dry estimate train: 99,279,505 rows x 78 features x 4B = 30.98 GB
+dry estimate test: 77,949,788 rows x 78 features x 4B = 24.32 GB
+{'step': 'dry estimate', 's': 2.1, 'peak_rss_mb': 10061, 'n_features': 78, 'train_rows': 99279505, 'test_rows': 77949788}
+{'step': 'candidates_train', 's': 21.5, 'peak_rss_mb': 10061, 'm': 10, 'n': 45, 'variant': 'v1r', 'sibling': False, 'rows': 99279505, 's1': 2206821, 'max_per_s1': 45}
+{'step': 'candidates_test', 's': 7.1, 'peak_rss_mb': 13498, 'm': 10, 'n': 45, 'variant': 'v1r', 'sibling': False, 'rows': 77949788, 's1': 1732544, 'max_per_s1': 45}
+/Users/arnav/amlc2026/code/business_entity_resolution/src/gate.py:272: DeprecationWarning: In Polars 2.0, the default behavior for `empty_as_null` will change to `False`. To keep the current behavior, explicitly set `empty_as_null=True`.
+  .explode("rec_id"))
+{'step': 'candidate_pairs.tsv', 's': 21.8, 'peak_rss_mb': 13498, 'path': '/Users/arnav/amlc2026/output/candidate_pairs.tsv', 'rows': 77949788}

@@ -1,0 +1,22 @@
+{'step': 's1', 's': 1.9, 'peak_rss_mb': 1070, 'n': 2206821, 'sampled': 441364}
+{'step': 's2 loaded', 's': 6.4, 'peak_rss_mb': 3398}
+{'step': 's3 loaded', 's': 5.3, 'peak_rss_mb': 4231}
+/Users/arnav/amlc2026/code/business_entity_resolution/src/structure.py:430: DeprecationWarning: In Polars 2.0, the default behavior for `empty_as_null` will change to `False`. To keep the current behavior, explicitly set `empty_as_null=True`.
+  vocab = s1.select("country", tok=pl.col("nm").str.extract_all(r"\S+")).explode("tok").drop_nulls().unique()
+{'step': 'derived', 's': 4.3, 'peak_rss_mb': 4677, 'recs': 2063282, 'true': 1525917, 'vocab': 121396, 'pool': 2206821}
+/Users/arnav/amlc2026/code/business_entity_resolution/src/structure.py:142: DeprecationWarning: In Polars 2.0, the default behavior for `empty_as_null` will change to `False`. To keep the current behavior, explicitly set `empty_as_null=True`.
+  t.explode("bare").drop_nulls("bare").with_columns(kind=pl.lit("bare6"), num="bare").select(keep)])
+{'step': 'q1', 's': 0.9, 'peak_rss_mb': 4677}
+{'step': 'q2', 's': 0.2, 'peak_rss_mb': 4677}
+/Users/arnav/amlc2026/code/business_entity_resolution/src/structure.py:207: DeprecationWarning: In Polars 2.0, the default behavior for `empty_as_null` will change to `False`. To keep the current behavior, explicitly set `empty_as_null=True`.
+  tk = (recs.select("k", "country", tok=CTOK).explode("tok").filter(pl.col("tok").str.len_chars() >= 3)
+{'step': 'addr index', 's': 17.6, 'peak_rss_mb': 5278, 'nnz': 7282735}
+{'step': 'q3', 's': 9.6, 'peak_rss_mb': 5678}
+{'step': 'name+addr index', 's': 25.1, 'peak_rss_mb': 6918, 'nnz': 7610198}
+{'step': 'q4', 's': 11.3, 'peak_rss_mb': 7305}
+/Users/arnav/amlc2026/code/business_entity_resolution/src/structure.py:347: DeprecationWarning: In Polars 2.0, the default behavior for `empty_as_null` will change to `False`. To keep the current behavior, explicitly set `empty_as_null=True`.
+  ct = (t.select("i", "lab", "labfix", tok=pl.col(core).str.extract_all(r"\S+")).explode("tok")
+{'step': 'q5', 's': 0.4, 'peak_rss_mb': 7305}
+{'step': 'q6', 's': 16.2, 'peak_rss_mb': 7305}
+{'step': 'written', 's': 0.0, 'peak_rss_mb': 7305}
+wrote /Users/arnav/amlc2026/docs/structure.md

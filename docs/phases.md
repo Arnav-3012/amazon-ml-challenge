@@ -1,5 +1,8 @@
 # Phases
 
+## 2026-09-27: CE stack decision
+- CE stack ADOPTED (OOF(b) 0.9746 -> 0.9775); rank features and confident-FN override REJECTED; batch-3 features cut for time, scope locked to v1r blocking + France normalise + skew fix + CE stack. Details: docs/decisions_mistakes.md.
+
 ## Phase 0 / M0: Scaffold (2026-09-25)
 **Status:** done. The user reports the env verification import passes (after `brew install libomp`).
 - Repo layout mirrors the submission zip; docs written; uv venv (Python 3.11) with phase-0 deps pinned.
@@ -147,3 +150,55 @@ missing. Revision 2 of docs/breakdown.md written from the real numbers.
 **2026-09-26 M5-2 DONE + Submit #1:** cv_full OOF (b) 0.9746 @ t=0.75 (a: 0.9751); predict --folds -> **LB 0.967** (M4 0.957). OOF->LB gap still -0.008. Backups `output/*_sub1.tsv`.
 
 **2026-09-26 block autopsy DONE:** lexical unions buy <= +0.001 ceiling at +28 cand/S1; 61% of v1 misses are in no channel. Next: stage-2 (M5-3) `stage2 --smoke` -> `stage2`; find the OOF->LB gap (India/France mix); encoder retrieval for the recall ceiling.
+
+**2026-09-26 adv_val DONE:** AUC 0.99997 (0.99969 w/o top5) -> broad France/US+India feature shift, not concentrated. 6 features flagged (drift \u00d7 matcher top-20): num_code, num_rel_absdiff, unmatched_max_idf_b, addr_tset_gaprec, addr_tset, X_score_gaprec. num_code (FR median 3 vs 1) looks like an address-code-convention difference. Next: decide whether to renormalise num_code/addr features for France or leave as model-learnable drift.
+
+**2026-09-26 adversarial validation coded:** `src/adv_val.py` → `oof/adv_val.json`, `docs/adv_val.md`. Run: `python -m src.adv_val`. Tests whether France test candidates are feature-shifted (OOF->LB gap).
+
+**2026-09-26 test diagnosis DONE:** `src/test_diag.py` → `docs/test_diag.md`. Test p distributions match train (b) per country. Outlier: test India has 1.05% of S1s in the uncertain band [0.3, 0.75) vs 0.67% on train India. France is not an outlier: its empty % and pred/S1 are in the train range.
+
+**2026-09-26 blocking autopsy 3 coded:** `src/block_autopsy3.py` → `docs/block_autopsy3.md` (Part 0 already written). Run: `python -m src.block_autopsy3` (add `--p2-n 20000` for a faster Part 2).
+
+**2026-09-26 adv_val DONE:** AUC 0.99997 (0.99969 w/o top5) -> broad France/US+India feature shift on test candidates, not concentrated in a few features. 6 flagged (adv-val top-20 x matcher top-20): num_code, num_rel_absdiff, unmatched_max_idf_b, addr_tset_gaprec, addr_tset, X_score_gaprec (matcher's #1, 56% gain). num_code FR median 3 vs 1 for US+India -- address-code-convention difference, feeds num_rel_* too. docs/adv_val.md Results filled.
+
+**2026-09-26 eyeball 2 coded:** `src/eyeball2.py` → `docs/eyeball2.md`. Run: `python -m src.eyeball2`. Tests whether (b) FPs are same-address siblings (the France mid-band pattern from test_diag).
+
+**2026-09-26 loss breakdown coded:** `src/loss_breakdown.py` → `docs/loss_breakdown.md`. Run: `python -m src.loss_breakdown`. Splits OOF (b) F0.5 loss into blocking-miss / matcher-FN / matcher-FP per S1 (Shapley, exact) and by 7 segment dimensions, to rank the next lever.
+
+**2026-09-26 selftrain_loco coded (M6 France proxy, not run):** `src/selftrain_loco.py` → `docs/selftrain_loco.md`. Run: `python -m src.selftrain_loco`. Simulates France with India (LOCO country with real labels): 20% S1 sample, fold 0, fast LightGBM (lr 0.1, <=1500 rounds). US-only baseline -> pseudo-label India (p>=0.98 argmax + no ambiguous rival S1 / p<=0.02 3:1) -> retrain US+pseudo-India (w=0.5) -> rescore, one more relabel+retrain round. Gate: adopt self-training for France if round1->round2 India macro F0.5 gains >= +0.02.
+
+**2026-09-26 blocking channel R coded (M5-4, not run):** `src/block_r.py` (new) + `src/gate.py`/`src/sibling.py` (OR-branch wiring). Run: `python -m src.block_r --split train` then `--split test` (needs candidates_{split}_v1.parquet), then `python -m src.gate --split train`/`--split test`/`--eval`/`--apply` as usual -- gate now folds R in automatically via grid(). `--eval` asserts F0.5 ceiling >= gate.ceiling (0.994) for the shipped (m, n, variant).
+
+**2026-09-26 world context fix coded (not run):** `src/cv_full.py` (context(), CTX_COLS, feature classification) + `src/features.py` (relative s1_side) + `src/world_skew.py` (new). Verify: `python -m src.cv_full --check` and `--check --split test`, then `python -m src.world_skew` → `docs/world_skew.md`.
+
+**2026-09-26 pre-full-run audit:** 19.00% drop verified on the full S1 table; `cv_full --check` (train) PASS on 26 REC_COLS. Blockers before the `--fast` full run: regenerate features (batch-2 not on disk), back up the Submit #1 fold models + cv_full.json/oof_full.parquet.
+
+**2026-09-27 twin_hits NaN fix + r_query_pct=10 (coded, not run):** `src/features.py`, `src/cv_full.py`, `configs/config.yaml`. Next: `python -m src.block_r --split train`; regenerate features before `cv_full --check`.
+
+**2026-09-27 ce_probe accelerate dep (coded, not run):** `requirements.txt` (+accelerate, +transformers pins), `src/ce_probe.py` (preflight assert). Verify: `uv pip install -r code/business_entity_resolution/requirements.txt` then `python -m src.ce_probe --smoke`.
+
+**2026-09-27 ce_probe fixed (data half verified, training on toy only):** `src/ce_probe.py`. Verify: `python -m src.ce_probe --smoke` (from code/business_entity_resolution/).
+
+**2026-09-27 RSS caps 18 GB + ce_probe libomp segfault fix (coded):** `src/mechanisms.py`, `src/france_deep.py`, `src/ce_probe.py`. Verify: `python -m src.france_deep` and `python -m src.ce_probe`.
+
+**2026-09-27 structure probe (coded, not run on data):** `src/structure.py` → `docs/structure.md`. Verify: `python -m src.structure --smoke` then `python -m src.structure` (from code/business_entity_resolution/).
+
+**2026-09-27 france_deep tabulate crash fixed (helper tested on toy frame only):** `src/france_deep.py`. Verify: `python -m src.france_deep --smoke`.
+
+**2026-09-27 structure RSS cap 4 GB -> 18 GB:** `src/structure.py`. Verify: `python -m src.structure`.
+
+**2026-09-27 channel R recovery + exact-key K probe (coded, not run):** `src/r_recovery.py` → `docs/r_recovery.md`. Verify: `python -m src.r_recovery`.
+
+**2026-09-27 gate variant v1r shipped:** `configs/config.yaml` (gate.variant v1->v1r, gate.n 60->45, gate.ceiling 0.994->0.993). Verify: `python -m src.gate --eval` (train).
+
+**2026-09-27 LB split probe (coded, not run):** `src/lb_probe.py`. Verify: `python -m src.lb_probe`.
+
+**2026-09-27 floor tests: tie-breakers + metric definition sanity (coded, not run):** `src/floor_tests.py` → `docs/floor_tests.md`. Verify: `python -m src.floor_tests`.
+
+**2026-09-27 tie-break core-name copy signal (coded, not run):** `src/tiebreak.py` → `docs/tiebreak.md`. Verify: `python -m src.tiebreak`.
+
+**2026-09-27 addr_empty grammar/lexical rule probe (coded, not run):** `src/addr_empty.py` → `docs/addr_empty.md`. Verify: `python -m src.addr_empty`.
+
+**2026-09-27 normaliser: France token_map + zero-padded address numbers (smoke-checked, full run pending):** `src/normalise.py`. Verify: `python -m src.normalise --split test` then `--split train` (asserts untouched rows byte-identical to the previous parquet), then re-run blocking/features downstream.
+
+**2026-09-27 STOP — project closed by user.** Best LB 0.967 (Submit #1). Pending, not done: full `normalise --split train`, blocking/features rebuild, retrain with gate v1r.

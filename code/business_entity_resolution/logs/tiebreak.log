@@ -1,0 +1,16 @@
+{'step': 'world', 's': 1.3, 'peak_rss_mb': 1679, 'n_s1': 1787525, 'kept': 5838131, 'in_cand': 5958189, 'f05': 0.974585}
+{'step': 'sample pairs', 's': 1.1, 'peak_rss_mb': 2251, 'n_s1': 357505, 'pairs': 1243927, 'TP': 1163028, 'FP': 5625, 'FN': 29571, 'miss': 45703}
+{'step': 'populations', 's': 1.4, 'peak_rss_mb': 4577, 'A FN/miss': 28609, 'B FN/miss': 17529, 'A TP': 25793, 'B TP': 50000, 'pool': 1787525, 'dict_size': 554}
+{'step': 'sec1', 's': 0.1, 'peak_rss_mb': 4577}
+{'step': 'sec2 ties', 's': 0.5, 'peak_rss_mb': 4577, 'scope': 58048, 'tie_rows': 2527848, 'conf': 1443140}
+{'step': 'sec2 part 0', 's': 1.4, 'peak_rss_mb': 4577, 'pairs': 961606}
+{'step': 'sec2 part 1', 's': 1.4, 'peak_rss_mb': 4577, 'pairs': 946084}
+{'step': 'sec2 part 2', 's': 1.3, 'peak_rss_mb': 4577, 'pairs': 932106}
+{'step': 'sec2 part 3', 's': 1.4, 'peak_rss_mb': 4577, 'pairs': 956795}
+{'step': 'sec2 part 4', 's': 1.4, 'peak_rss_mb': 4577, 'pairs': 949165}
+{'step': 'sec2 part 5', 's': 1.4, 'peak_rss_mb': 4577, 'pairs': 972376}
+{'step': 'sec2 part 6', 's': 1.4, 'peak_rss_mb': 4577, 'pairs': 956593}
+{'step': 'sec2 part 7', 's': 1.3, 'peak_rss_mb': 4577, 'pairs': 922013}
+{'step': 'sec3 S2', 's': 4.7, 'peak_rss_mb': 6134}
+{'step': 'sec3 S3', 's': 3.2, 'peak_rss_mb': 6169}
+{'step': 'report', 's': 0.0, 'peak_rss_mb': 6169, 'path': '/Users/arnav/amlc2026/docs/tiebreak.md'}

@@ -1,0 +1,12 @@
+actual country values (raw S1): ['France', 'India', 'US']
+{'step': 'load_s1', 's': 1.7, 'peak_rss_mb': 1752, 'n': 1732544}
+{'step': 'load_test_p', 's': 0.1, 'peak_rss_mb': 2065, 'n': 60901445}
+{'step': 'argmax', 's': 4.4, 'peak_rss_mb': 9945, 'n': 1430356}
+{'step': 'section_A_done', 's': 10.6, 'peak_rss_mb': 10520}
+{'step': 'section_B_done', 's': 11.8, 'peak_rss_mb': 10520, 'peak': 10520}
+{'step': 'section_C_done', 's': 0.1, 'peak_rss_mb': 10520}
+{'step': 'section_D_done', 's': 0.4, 'peak_rss_mb': 10520}
+{'step': 'section_E_done', 's': 5.4, 'peak_rss_mb': 10520, 'peak': 10520}
+{'step': 'section_F_done', 's': 0.0, 'peak_rss_mb': 10520}
+{'step': 'section_G_done', 's': 0.0, 'peak_rss_mb': 10520}
+wrote /Users/arnav/amlc2026/docs/france_deep.md, peak_rss_mb=10520

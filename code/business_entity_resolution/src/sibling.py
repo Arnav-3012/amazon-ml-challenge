@@ -35,8 +35,8 @@ import polars as pl
 from rapidfuzz.fuzz import token_set_ratio
 from rapidfuzz.process import cdist
 
-from .block import CHANNELS, finalize, norm_path
-from .gate import GCFG, N_MAX, VARIANTS, gate_bucket, grid, pool_dir, rec_best
+from .block import norm_path
+from .gate import GCFG, N_MAX, VARIANTS, finalize_r, gate_bucket, grid, pool_dir, rec_best
 from .io import CFG, ROOT, StepLog, load_gt_pairs, path
 
 SCFG = CFG["gate"]  # sib_margin lives under gate: in config.yaml, alongside m/n/variant
@@ -56,13 +56,13 @@ def anchor_margins(split: str, m: int, log: StepLog) -> pl.DataFrame:
     611M-row blockgrid scan + gate_bucket join/sort/collect happens here, ONCE; anchors() just filters this
     by delta). Reuses gate_bucket's `pre` score (same pool the v1/v2 candidates come from) so an anchor's
     confidence is measured on the same scale the rest of the pipeline already trusts.
-    gate_bucket's `pre` expr reads n_channels_hit, which only block.finalize() adds -- gate_bucket must
+    gate_bucket's `pre` expr reads n_channels_hit, which only gate.finalize_r() adds -- gate_bucket must
     never be called on a raw grid()/blockgrid scan (see gate.py's own build(), which always finalizes first)."""
     best = rec_best(split)
     log(f"{split} rec_best", records=best.height)
-    # finalize adds n_channels_hit (gate_bucket's `pre` expr reads it) and cuts the grid to (m, pool_k), same
-    # as gate.py's own build() -- gate_bucket must never see the raw blockgrid scan directly
-    x = gate_bucket(finalize(grid(split), m, GCFG["pool_k"], CHANNELS), best)  # margin needs the runner-up, no n-cut yet
+    # finalize_r adds n_channels_hit (gate_bucket's `pre` expr reads it) and cuts the grid to (m, pool_k),
+    # R included, same as gate.py's own build() -- gate_bucket must never see the raw blockgrid scan directly
+    x = gate_bucket(finalize_r(grid(split), m, GCFG["pool_k"]), best)  # margin needs the runner-up, no n-cut yet
     log(f"{split} gate_bucket", rows=x.height)
     top2 = (x.sort(["rec_id", "pre"], descending=[False, True])
             .group_by("rec_id", maintain_order=True)

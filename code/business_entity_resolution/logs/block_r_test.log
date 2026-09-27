@@ -1,0 +1,5 @@
+{'step': 'query set', 's': 1.4, 'peak_rss_mb': 3578, 'records': 996958, 'pct': 10}
+{'step': 'France R', 's': 104.4, 'peak_rss_mb': 3914, 's1': 259452, 'vocab': 20096, 'queries': 143499, 'hits': 430470}
+{'step': 'India R', 's': 1548.3, 'peak_rss_mb': 7862, 's1': 809986, 'vocab': 32245, 'queries': 471756, 'hits': 1415028}
+{'step': 'US R', 's': 798.1, 'peak_rss_mb': 7862, 's1': 663106, 'vocab': 27986, 'queries': 381703, 'hits': 1144894}
+{'step': 'blockr written', 's': 0.1, 'peak_rss_mb': 7862, 'path': '/Users/arnav/amlc2026/artifacts/interim/blockr_test.parquet', 'rows': 2990392}

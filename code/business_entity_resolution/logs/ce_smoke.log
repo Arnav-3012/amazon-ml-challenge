@@ -1,0 +1,31 @@
+{'step': 'build pairs', 's': 11.2, 'peak_rss_mb': 10071, 'train': 848, 'eval_scope': 397}
+{'step': 'load texts', 's': 0.4, 'peak_rss_mb': 10071}
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Loading weights:   0%|          | 0/105 [00:00<?, ?it/s]Loading weights: 100%|██████████| 105/105 [00:00<00:00, 8222.28it/s]
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/arnav/amlc2026/code/business_entity_resolution/src/ce_probe.py", line 269, in <module>
+    main(a.smoke)
+  File "/Users/arnav/amlc2026/code/business_entity_resolution/src/ce_probe.py", line 248, in main
+    model = fit_ce(train_pairs, texts, smoke, log)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/arnav/amlc2026/code/business_entity_resolution/src/ce_probe.py", line 136, in fit_ce
+    model.fit(train_dataloader=loader, epochs=1 if smoke else EPOCHS, loss_fct=torch.nn.BCEWithLogitsLoss(),
+  File "/Users/arnav/amlc2026/.venv/lib/python3.11/site-packages/sentence_transformers/cross_encoder/fit_mixin.py", line 296, in fit
+    args = CrossEncoderTrainingArguments(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<string>", line 121, in __init__
+  File "/Users/arnav/amlc2026/.venv/lib/python3.11/site-packages/sentence_transformers/base/training_args.py", line 152, in __post_init__
+    super().__post_init__()
+  File "/Users/arnav/amlc2026/.venv/lib/python3.11/site-packages/transformers/training_args.py", line 1629, in __post_init__
+    self.device
+  File "/Users/arnav/amlc2026/.venv/lib/python3.11/site-packages/transformers/training_args.py", line 1928, in device
+    return self._setup_devices
+           ^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.11/3.11.13/Frameworks/Python.framework/Versions/3.11/lib/python3.11/functools.py", line 1001, in __get__
+    val = self.func(instance)
+          ^^^^^^^^^^^^^^^^^^^
+  File "/Users/arnav/amlc2026/.venv/lib/python3.11/site-packages/transformers/training_args.py", line 1816, in _setup_devices
+    raise ImportError(
+ImportError: Using the `Trainer` with `PyTorch` requires `accelerate>=1.1.0`: Please run `pip install transformers[torch]` or `pip install 'accelerate>=1.1.0'`

@@ -1,11 +1,16 @@
 """M5-2 full-data stage-1 matcher: GroupKFold(5) by s1_id on 100% of train S1s, with S1-dropout on the training folds.
 
 Folds: S1 fold = (position in a seed-42 permutation of the sorted S1 ids) mod n_folds; an S1's rows never split.
-Dropout world: drop_frac of ALL train S1s removed (seeded). Their rows vanish, so their records become orphans whose
-remaining candidates are all negatives (labels unchanged). Recomputed over the remaining rows: n_cand_rec, the
-record-side relative features (features.relative: *_drec, *_rkrec, *_gaprec) and record-centric ranks {ch}_rrank
-(minus the dropped rows ranked ahead in the same record). S1-side and pair features cannot change. Not simulated:
-pairs that would enter the candidate set (they have no pair features), a rank crossing the m cut, the gate.
+Dropout world: drop_frac of ALL train S1s removed (seeded, dead_s1k: independent of any sample). Their rows vanish,
+so their records become orphans whose remaining candidates are all negatives (labels unchanged). context()
+recomputes every REC_COLS feature over ALL remaining rows of the split (never only a caller's subset: a record's
+competitors are every S1): n_cand_rec, *_drec/_rkrec/_gaprec, {ch}_rrank (minus dropped rows ranked ahead), and
+CTX_COLS (rec_name_hits95, is_noaddr_ambiguous, twin_hits over surviving candidates; s1_name_dup and
+rec_name_novel/_all_novel over surviving S1s). S1_SIDE features cannot change under whole-S1 removal; PAIR_COLS
+depend on the two records only. Data refuses any feature in none of the three sets. The same context() with no dead
+S1s is the split as-is (test): --check --split test must reproduce the stored test features. Not simulated: pairs
+that would enter the candidate set (they have no pair features), a rank crossing the m cut (n_channels_hit), the
+gate, corpus IDF shift (idf_{split} df counts include the dropped S1s: *_idfj, *_score, unmatched_max_idf_*).
 Fold k: its own world (seed+1000+k). Training S1s = other folds minus dropped; inner_valid_frac of them (seed+3000+k)
 are the early-stopping set (all their rows); the rest are sampled as in M4 (train.sample_rows). -> models/fold_{k}.txt
 OOF: each row scored by its fold's model, then the decide.py rule (argmax per record, one global t), macro F0.5:
@@ -15,7 +20,7 @@ OOF: each row scored by its fold's model, then the decide.py rule (argmax per re
 Memory: features are read part by part; only the sampled training rows are held as float32. Stops if peak RSS > max_rss_mb.
 
 Run from code/business_entity_resolution/:
-  python -m src.cv_full --check    # the no-drop world must reproduce every stored record-side feature (all rows)
+  python -m src.cv_full --check [--split test]  # no-drop context() must reproduce every stored REC_COLS feature
   python -m src.cv_full --smoke    # 2% of S1s, 50 rounds, *_smoke outputs: end-to-end crash test
   python -m src.cv_full            # 5 folds + OOF (a) and (b)
   python -m src.cv_full --curve    # fold 0 at curve_fracs of its training S1s, fixed rounds = fold 0 best iter, on (b)
@@ -26,6 +31,7 @@ import shutil
 import subprocess
 import sys
 import time
+from functools import cache
 from pathlib import Path
 
 import lightgbm as lgb
@@ -35,49 +41,73 @@ import pyarrow.parquet as pq
 from sklearn.metrics import log_loss
 
 from .block import BCFG, CHANNELS, norm_path
-from .decide import f05_vec
-from .features import REL_COLS, id_key, relative
+from .decide import decide_expected, f05_vec
+from .features import FIELDS, ID_COLS, REL_COLS, id_key, relative
 from .io import CFG, StepLog, load_gt_pairs, path
 from .metric import macro_f05
-from .train import SCORE_COLS, dataset, feature_cols, fit, fit_ds, parts, sample_rows
+from .train import SCORE_COLS, dataset, feature_cols, fit, fit_ds, perf_cores, sample_rows
 
 FC, MC, SEED = CFG["cv_full"], CFG["matcher"], CFG["seed"]
 RR_COLS = [f"{ch}_rrank" for ch in CHANNELS]
-REC_COLS = ["n_cand_rec", *(f"{c}_{x}" for c in REL_COLS for x in ("drec", "rkrec", "gaprec")), *RR_COLS]
+REC_X = ("drec", "rkrec", "gaprec")
+# CONTEXT features the pre-2026-09-26 world() left at their stored (all-S1) value
+CTX_COLS = ["rec_name_hits95", "is_noaddr_ambiguous", "twin_hits", "s1_name_dup", "rec_name_novel", "rec_name_all_novel"]
+REC_COLS = ["n_cand_rec", *(f"{c}_{x}" for c in REL_COLS for x in REC_X), *RR_COLS, *CTX_COLS]  # context() output
+S1_SIDE = {"n_cand_s1", *(f"{c}_{x}" for c in REL_COLS for x in ("ds1", "rks1")), *(f"{ch}_srank" for ch in CHANNELS)}
+PAIR_COLS = {  # the two records only (given the split's fixed IDF table and mined token/locality dicts)
+    *(f"{ch}_score" for ch in CHANNELS), "n_channels_hit", "name_ratio", "name_tsort", "name_tset", "name_partial",
+    "name_jw", "alias_best", "name_len_diff", "s1_nonascii", "rec_nonascii", "legal_code", "marker_code", "addr_tset",
+    "num_code", "street_eq", "has_addr_code", "is_s3", *(f"{k}_idfj" for k in FIELDS), "num_rel_class",
+    "num_rel_absdiff", "num_rel_reldiff", "unmatched_cnt_a", "unmatched_cnt_b", "unmatched_max_idf_a",
+    "unmatched_max_idf_b", "unmatched_char_sim", "name_tset_dict", "addr_tset_alias", "locality_rel", "cov_addr_rec",
+    "cov_addr_s1", "cov_name_rec", "cov_name_s1", "addr_len_ratio", "num_range_hit", "num_absdiff_bucket",
+    "legal_s1_has", "legal_rec_has", "legal_rel"}
 TS = np.round(np.arange(*CFG["decide"]["t_grid"]), 4)
 
 
 class Log(StepLog):
+    max_mb = FC["max_rss_mb"]
+
     def __call__(self, step: str, **kw) -> None:
         super().__call__(step, **kw)
-        if self.rows[-1]["peak_rss_mb"] > FC["max_rss_mb"]:
-            raise SystemExit(f"STOP: peak RSS {self.rows[-1]['peak_rss_mb']} MB > {FC['max_rss_mb']} MB after '{step}'")
+        if self.rows[-1]["peak_rss_mb"] > self.max_mb:
+            raise SystemExit(f"STOP: peak RSS {self.rows[-1]['peak_rss_mb']} MB > {self.max_mb} MB after '{step}'")
+
+
+def feature_files(split: str) -> list[str]:
+    return sorted(str(p) for p in (path("features_dir") / split).glob("part-*.parquet"))
 
 
 class Data:
-    """Row metadata of features/train (file order) restricted to the S1s of `s1`, plus the part layout."""
+    """Row metadata of features/train (file order) restricted to the S1s of `s1`, plus the part layout.
+    wcols = the REC_COLS that gather/predict take from a context() dir instead of the stored parts."""
 
     def __init__(self, s1: pl.DataFrame):
-        self.files = sorted(str(p) for p in Path(parts("train")).parent.glob("part-*.parquet"))
+        self.files = feature_files("train")
         n = np.array([pq.ParquetFile(f).metadata.num_rows for f in self.files])
         self.bounds = list(zip(np.r_[0, np.cumsum(n)[:-1]], np.cumsum(n)))
         self.feats = feature_cols("train")
+        odd = set(self.feats) - PAIR_COLS - S1_SIDE - set(REC_COLS)
+        assert not odd, f"unclassified features (add to PAIR_COLS / S1_SIDE, or to CTX_COLS + context()): {sorted(odd)}"
+        self.wcols = [c for c in REC_COLS if c in self.feats]
         gt = load_gt_pairs().select(s1k=id_key("s1_id"), reck=id_key("match_id"), label=pl.lit(1, pl.Int8))
-        self.meta = (pl.scan_parquet(self.files).with_row_index("_i")
-                     .select("_i", *REL_COLS, *RR_COLS, "X_srank", s1k=id_key("s1_id"), reck=id_key("rec_id"),
-                             hard=pl.max_horizontal(SCORE_COLS).fill_null(0).cast(pl.Float32))
-                     .join(s1.lazy().select("s1k", "code"), on="s1k", how="inner", maintain_order="left")
-                     .join(gt.lazy(), on=["s1k", "reck"], how="left", maintain_order="left")
-                     .with_columns(pl.col("label").fill_null(0)).collect())
+        s1c = s1.select("s1k", "code")
+        # v1 = the M3b candidate set (X_rrank <= blocking.m or X_srank <= blocking.k); everything else is a
+        # v2-only "extension" row. Memory guard (M5-3) subsamples extension-only negatives, never v1 or positive rows.
+        v1 = ((pl.col("X_rrank") <= BCFG["m"]) | (pl.col("X_srank") <= BCFG["k"])).fill_null(False)
+        self.meta = pl.concat([  # part by part: only one part's id strings are alive at a time
+            pl.read_parquet(f, columns=[*ID_COLS, *SCORE_COLS, "X_rrank", "X_srank"]).with_row_index("_i", int(lo))
+            .select("_i", s1k=id_key("s1_id"), reck=id_key("rec_id"),
+                    hard=pl.max_horizontal(SCORE_COLS).fill_null(0).cast(pl.Float32), in_v1=v1)
+            .join(s1c, on="s1k", how="inner", maintain_order="left")
+            .join(gt, on=["s1k", "reck"], how="left", maintain_order="left")
+            for f, (lo, _) in zip(self.files, self.bounds)]).with_columns(pl.col("label").fill_null(0))
         assert self.meta["_i"].is_sorted() and self.meta["_i"].n_unique() == self.meta.height
         self.i = self.meta["_i"].to_numpy()
         self.code = self.meta["code"].to_numpy()
         self.y = self.meta["label"].to_numpy()
         self.fold = s1["fold"].to_numpy()[self.code]
-        # v1 = the M3b candidate set (X_rrank <= blocking.m or X_srank <= blocking.k); everything else is a
-        # v2-only "extension" row. Memory guard (M5-3) subsamples extension-only negatives, never v1 or positive rows.
-        self.in_v1 = (((self.meta["X_rrank"] <= BCFG["m"]) | (self.meta["X_srank"] <= BCFG["k"]))
-                      .fill_null(False).to_numpy())
+        self.in_v1 = self.meta["in_v1"].to_numpy()
 
     def chunks(self):
         """(meta slice a:b, part rows) per feature part."""
@@ -96,14 +126,14 @@ class Data:
                 X[u:v] = pl.read_parquet(f, columns=self.feats).select(pl.col(self.feats).cast(pl.Float32)).to_numpy()[sel]
         if wdir is not None:
             for j, c in enumerate(self.feats):
-                if c in REC_COLS:
+                if c in self.wcols:
                     X[:, j] = np.load(wdir / f"{c}.npy", mmap_mode="r")[pos]
         return X
 
     def predict(self, boosters: list[lgb.Booster], wdir: Path | None = None, keep: np.ndarray | None = None) -> np.ndarray:
         """p for every meta row from its fold's booster (NaN where keep is False)."""
         p = np.full(len(self.i), np.nan, np.float32)
-        mm = {c: np.load(wdir / f"{c}.npy", mmap_mode="r") for c in REC_COLS} if wdir is not None else {}
+        mm = {c: np.load(wdir / f"{c}.npy", mmap_mode="r") for c in self.wcols} if wdir is not None else {}
         for f, a, b, rows in self.chunks():
             X = pl.read_parquet(f, columns=self.feats).select(pl.col(self.feats).cast(pl.Float32)).to_numpy()[rows]
             for j, c in enumerate(self.feats):
@@ -135,31 +165,99 @@ def drop_mask(n: int, seed: int) -> np.ndarray:
     return d
 
 
-def world(meta: pl.DataFrame, keep: np.ndarray, out: Path, log: Log) -> None:
-    """Record-side columns after removing the rows with keep=False -> out/{col}.npy (float32, meta row order,
-    NaN on removed rows and where the value is null)."""
+@cache
+def dead_s1k(seed: int) -> pl.Series:
+    """s1k of the drop_frac of ALL train S1s removed in world `seed` (same draw whatever sample the caller holds)."""
+    s = s1_table(1.0)["s1k"]
+    return s.filter(pl.Series(drop_mask(s.len(), seed)))
+
+
+def dropped(s1: pl.DataFrame, seed: int) -> np.ndarray:
+    """Mask over s1's rows: removed in world `seed`. At frac 1 this is drop_mask(s1.height, seed)."""
+    return s1.select(pl.col("s1k").is_in(dead_s1k(seed).implode())).to_series().to_numpy()
+
+
+def rec_novelty(split: str, s1e: pl.DataFrame) -> pl.DataFrame:
+    """reck -> features.rec_name_novel / rec_name_all_novel against the name-token vocab of the S1s in s1e
+    (country, name_tokens): the per-row loop of features.py, vectorised per record."""
+    voc = s1e.select("country", tok="name_tokens").explode("tok").drop_nulls().unique().with_columns(_in=pl.lit(True))
+    rec = pl.concat([pl.read_parquet(norm_path(split, n), columns=["entity_id", "country", "name_tokens"])
+                     for n in (2, 3)])
+    x = (rec.select(reck=id_key("entity_id"), country="country", tok="name_tokens").explode("tok")
+         .join(voc, on=["country", "tok"], how="left"))
+    t, n, m = pl.col("tok").is_not_null(), pl.col("n"), pl.col("miss")
+    return (x.group_by("reck").agg(n=t.sum(), miss=(t & pl.col("_in").is_null()).sum())
+            .select("reck", rec_name_novel=pl.when(n > 0).then(m / n).otherwise(0.0).cast(pl.Float32),
+                    rec_name_all_novel=((n > 0) & (m == n)).cast(pl.Int8)))
+
+
+def context(split: str, dead: pl.Series, out: Path, rows: np.ndarray | None, log: Log) -> None:
+    """Every REC_COLS feature of features/{split} in the world where the S1s `dead` (s1k) do not exist, recomputed
+    over ALL rows of the split -> out/{col}.npy (float32, one value per global row index in `rows`, None = all rows
+    in file order; NaN on removed rows and where the value is null). Whole S1s go, so S1_SIDE cannot change.
+    dead empty = the split as-is (test); --check proves it reproduces the stored columns.
+    Order keeps one 69M-row key frame alive at a time: rrank (needs removed rows), then kept rows only."""
     shutil.rmtree(out, ignore_errors=True)
     out.mkdir(parents=True)
-    idx = np.flatnonzero(keep)
+    files = feature_files(split)
+    cols = [c for c in REC_COLS if c in pq.read_schema(files[0]).names]
+
+    def col(c: str) -> pl.Series:
+        return pl.concat([pl.read_parquet(f, columns=[c]) for f in files]).to_series()
+
+    keys = pl.concat([pl.read_parquet(f, columns=ID_COLS).select(s1k=id_key("s1_id"), reck=id_key("rec_id"))
+                      for f in files])
+    gone = keys.select(pl.col("s1k").is_in(dead.implode())).to_series()
+    keep = ~gone
+    idx = np.flatnonzero(keep.to_numpy())
 
     def save(name: str, v: pl.Series) -> None:
-        full = np.full(len(keep), np.nan, np.float32)
-        full[idx] = v.cast(pl.Float32).to_numpy()
-        np.save(out / f"{name}.npy", full)
-    kept = meta.select("s1k", "reck", *REL_COLS).filter(pl.Series(keep))
-    keys = kept.select("s1k", "reck")
-    save("n_cand_rec", keys.select(pl.len().over("reck")).to_series())
-    for c in REL_COLS:
-        r = relative(keys, kept[c])
-        for x in ("drec", "rkrec", "gaprec"):
-            save(f"{c}_{x}", r[f"{c}_{x}"])
-    del kept, keys
+        if name in cols:
+            full = np.full(len(gone), np.nan, np.float32)
+            full[idx] = v.cast(pl.Float32).to_numpy()
+            np.save(out / f"{name}.npy", full if rows is None else full[rows])
+
     for c in RR_COLS:  # record-centric ranks are ordinal (unique per record and channel): subtract removed rows ahead
-        x = pl.col(c)
-        ahead = (pl.col("_gone") & x.is_not_null()).cast(pl.Int32).cum_sum().over("reck", order_by=c)
-        v = meta.select("reck", c).with_columns(_gone=pl.Series(~keep)).select((x - ahead).alias(c))
-        save(c, v.to_series().filter(pl.Series(keep)))
-    log(f"world {out.name}", kept_rows=len(idx), removed_rows=int(len(keep) - len(idx)))
+        if c in cols:
+            x = pl.col(c)
+            ahead = (pl.col("_gone") & x.is_not_null()).cast(pl.Int32).cum_sum().over("reck", order_by=c)
+            save(c, keys.select("reck", col(c), _gone=gone).select(x - ahead).to_series().filter(keep))
+    kept = keys.filter(keep)
+    del keys
+    save("n_cand_rec", kept.select(pl.len().over("reck")).to_series())
+    for c in REL_COLS:
+        if any(f"{c}_{x}" in cols for x in REC_X):
+            r = relative(kept, col(c).filter(keep), s1_side=False)
+            for x in REC_X:
+                save(f"{c}_{x}", r[f"{c}_{x}"])
+            del r
+    # features.py pass 2 expressions, verbatim (twin_hits: NaN addr_tset -> null -> -1, so no-address never counts as a twin)
+    tv = kept.select("reck", t=col("name_tset").filter(keep), a=col("addr_tset").filter(keep))
+    hits = tv.select((pl.col("t") >= 95).sum().over("reck").cast(pl.Int32)).to_series()
+    save("rec_name_hits95", hits)
+    if "is_noaddr_ambiguous" in cols:  # rec_no_addr isn't stored; removal only lowers hits95, so flag & new hits >= 2
+        save("is_noaddr_ambiguous", ((col("is_noaddr_ambiguous").filter(keep) == 1) & (hits >= 2)).cast(pl.Int8))
+    twin = (pl.col("t") >= 95) & (pl.col("a").fill_nan(None).fill_null(-1) >= 90)
+    save("twin_hits", tv.select(twin.sum().over("reck").cast(pl.Int32) - twin.cast(pl.Int32)).to_series())
+    del tv, hits
+    s1e = (pl.read_parquet(norm_path(split, 1), columns=["entity_id", "country", "core_name", "name_tokens"])
+           .with_columns(s1k=id_key("entity_id")).filter(~pl.col("s1k").is_in(dead.implode())))
+    dup = s1e.select("s1k", s1_name_dup=(pl.len().over("country", "core_name") - 1).cast(pl.Int32))
+    save("s1_name_dup", kept.select("s1k").join(dup, on="s1k", how="left", maintain_order="left")["s1_name_dup"])
+    if "rec_name_novel" in cols or "rec_name_all_novel" in cols:
+        nov = kept.select("reck").join(rec_novelty(split, s1e), on="reck", how="left", maintain_order="left")
+        save("rec_name_novel", nov["rec_name_novel"])
+        save("rec_name_all_novel", nov["rec_name_all_novel"])
+    log(f"context {split} {out.name}", kept_rows=len(idx), removed_rows=int(len(gone) - len(idx)), cols=len(cols))
+
+
+def world(meta: pl.DataFrame, keep: np.ndarray, out: Path, log: Log) -> None:
+    """Compat for ab_test / invariance / selftrain_loco: context() without the S1s of meta whose rows have
+    keep=False, saved in meta row order. Those S1s are all it drops: at frac < 1 that is drop_frac of the SAMPLE,
+    not of all S1s (use context(dead_s1k(seed)) for the test-density world)."""
+    s = meta.select("s1k", keep=pl.Series(keep)).unique()
+    assert s["s1k"].n_unique() == s.height, "world(): keep must drop whole S1s"
+    context("train", s.filter(~pl.col("keep"))["s1k"], out, meta["_i"].to_numpy(), log)
 
 
 def truth_keys(s1: pl.DataFrame) -> dict:
@@ -199,13 +297,42 @@ def score(s1: pl.DataFrame, d: Data, p: np.ndarray, scope: np.ndarray, exact: di
             "curve": {f"{x:.2f}": float(v) for x, v in zip(TS, cur)}}
 
 
+def score_expected(s1: pl.DataFrame, d: Data, p: np.ndarray, scope: np.ndarray, exact: dict | None = None) -> dict:
+    """decide.expected_f05_prefix rule on p (NaN = row absent): argmax per record (same as score()), then the
+    per-S1 expected-F0.5 prefix in place of one global t. macro F0.5 over the S1s in `scope`, computed the same
+    vectorised way as score() (per-S1 f05_vec, not a dict-based macro_f05 loop). Same return shape as score()
+    (minus best_t/curve, which have no meaning here) so --ab can compare the two rules directly."""
+    ok = ~np.isnan(p)
+    top = (pl.DataFrame({"s1_id": d.code[ok], "rec_id": d.meta["reck"].to_numpy()[ok], "p": p[ok], "y": d.y[ok] == 1})
+           .sort(["rec_id", "p", "s1_id"], descending=[False, True, False]).filter(pl.col("rec_id").is_first_distinct()))
+    kept = decide_expected(top.select("s1_id", "rec_id", "p")).join(
+        top.select("s1_id", "rec_id", "y"), on=["s1_id", "rec_id"])
+    c, yy, n, ntrue = kept["s1_id"].to_numpy(), kept["y"].to_numpy(), s1.height, s1["ntrue"].to_numpy()
+    npred, tp = np.bincount(c, minlength=n), np.bincount(c[yy], minlength=n)
+    f = f05_vec(tp, npred, ntrue)
+    if exact is not None:
+        pred = {a: set(b) for a, b in kept.group_by("s1_id").agg("rec_id").iter_rows()}
+        ex, _ = macro_f05(pred, {i: frozenset(exact.get(i, ())) for i in np.flatnonzero(scope)})
+        assert abs(ex - f[scope].mean()) < 1e-9, (ex, f[scope].mean())
+    ctry, single = s1["country"].to_numpy(), ntrue == 0
+    return {"macro_f05": float(f[scope].mean()), "n_s1": int(scope.sum()),
+            "f05_singleton": float(f[scope & single].mean()), "f05_nonsingleton": float(f[scope & ~single].mean()),
+            **{f"f05_{x}": float(f[scope & (ctry == x)].mean()) for x in sorted(set(ctry[scope]))},
+            "pred_matches_per_s1": float(npred[scope].mean()), "fp_pairs": int((~yy).sum()),
+            "logloss": float(log_loss(d.y[ok], p[ok], labels=[0, 1]))}
+
+
 def weighted_sample_rows(idx: np.ndarray, y: np.ndarray, hard: np.ndarray, in_v1: np.ndarray,
-                          rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
+                          rng: np.random.Generator, ntrue: np.ndarray | None = None) -> tuple[np.ndarray, np.ndarray]:
     """All positives + the negatives sample_rows() takes hardest-first (n_hard = hard_frac x min(#neg,
     neg_ratio x #pos)), weight 1 + every other ("easy") negative kept with prob easy_neg_rate x (ext_neg_rate
     if extension-only, i.e. not in_v1, else 1), weight 1/that prob. Returns (kept row idx sorted, weight).
     Each row is kept with prob 1 or a known prob, so the weighted rows are an unbiased estimate of the
-    full-population gradient."""
+    full-population gradient.
+    ntrue: per-row n_true_pairs(S1) (None or cv_full.macro_weight=false -> no macro reweighting). When given,
+    every kept row's weight *= 1/max(1, ntrue) (singleton S1s -> 1, so their negatives are untouched), then the
+    whole product is rescaled so its mean over kept rows is 1 -- this composes with, not replaces, the sampling
+    weight above, and keeps the training loss on the same overall scale as before (same effective sample size)."""
     pos, neg = idx[y[idx] == 1], idx[y[idx] == 0]
     n_hard = round(MC["hard_frac"] * min(len(neg), MC["neg_ratio"] * len(pos)))
     order = neg[np.argsort(-hard[neg], kind="stable")]
@@ -214,6 +341,9 @@ def weighted_sample_rows(idx: np.ndarray, y: np.ndarray, hard: np.ndarray, in_v1
     kept = rng.random(len(easy)) < pk
     rows = np.concatenate([pos, hard_sel, easy[kept]])
     w = np.concatenate([np.ones(len(pos) + len(hard_sel)), 1.0 / pk[kept]])
+    if ntrue is not None and FC["macro_weight"]:
+        w_s1 = 1.0 / np.maximum(1, ntrue[rows])
+        w = w * w_s1 / np.mean(w * w_s1)
     order = np.argsort(rows, kind="stable")
     return rows[order], w[order].astype(np.float32)
 
@@ -258,14 +388,15 @@ def check_weighted_sampling(log: Log) -> None:
                               f"sampling seeds at {len(idx)} rows -- BIAS, not noise; do not run cv_full")
 
 
-def fold_datasets(d: Data, tr: np.ndarray, w: np.ndarray, va: np.ndarray, wdir: Path) -> tuple[lgb.Dataset, lgb.Dataset]:
+def fold_datasets(d: Data, tr: np.ndarray, w: np.ndarray, va: np.ndarray, wdir: Path,
+                  overrides: dict | None = None) -> tuple[lgb.Dataset, lgb.Dataset]:
     """Constructed train/valid Datasets; each float32 matrix is dropped right after binning, so at most one
     matrix + the bins are alive at a time."""
     X = d.gather(tr, wdir)
-    dtr = dataset(X, d.y[tr], d.feats, w)
+    dtr = dataset(X, d.y[tr], d.feats, w, overrides=overrides)
     del X
     Xv = d.gather(va, wdir)
-    dva = dataset(Xv, d.y[va], d.feats, reference=dtr)
+    dva = dataset(Xv, d.y[va], d.feats, reference=dtr, overrides=overrides)
     del Xv
     return dtr, dva
 
@@ -273,7 +404,7 @@ def fold_datasets(d: Data, tr: np.ndarray, w: np.ndarray, va: np.ndarray, wdir: 
 def split_fold(s1: pl.DataFrame, k: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """(dropped S1 mask of fold k's world, training S1 mask, inner early-stopping S1 mask)."""
     n = s1.height
-    drop = drop_mask(n, SEED + 1000 + k)
+    drop = dropped(s1, SEED + 1000 + k)
     tr = np.flatnonzero((s1["fold"].to_numpy() != k) & ~drop)
     inner = np.zeros(n, bool)
     inner[np.random.default_rng(SEED + 3000 + k).choice(tr, round(FC["inner_valid_frac"] * len(tr)), replace=False)] = True
@@ -282,24 +413,30 @@ def split_fold(s1: pl.DataFrame, k: int) -> tuple[np.ndarray, np.ndarray, np.nda
     return drop, train & ~inner, inner
 
 
-def run(s1: pl.DataFrame, d: Data, tag: str, smoke: bool, log: Log) -> None:
+def run(s1: pl.DataFrame, d: Data, tag: str, smoke: bool, log: Log, fast: bool = False) -> None:
     work, out_m, out_o = path("features_dir") / f"_worlds{tag}", path("models_dir"), path("oof_dir")
     out_m.mkdir(parents=True, exist_ok=True)
     rounds = 50 if smoke else MC["num_boost_round"]
+    overrides = None
+    if fast:
+        overrides = {"learning_rate": MC["learning_rate_fast"], "num_threads": perf_cores()}
+        rounds = min(rounds, MC["max_rounds_fast"])
     hard = d.meta["hard"].to_numpy()
     folds = []
     for k in range(MC["n_folds"]):
         drop, train, inner = split_fold(s1, k)
         wdir = work / f"fold{k}"
-        world(d.meta, ~drop[d.code], wdir, log)
-        tr, w = weighted_sample_rows(np.flatnonzero(train[d.code]), d.y, hard, d.in_v1, np.random.default_rng(SEED + k))
+        context("train", dead_s1k(SEED + 1000 + k), wdir, d.i, log)
+        ntrue = s1["ntrue"].to_numpy()[d.code]
+        tr, w = weighted_sample_rows(np.flatnonzero(train[d.code]), d.y, hard, d.in_v1, np.random.default_rng(SEED + k),
+                                     ntrue)
         va = np.flatnonzero(inner[d.code])  # early-stopping/valid set: unsampled, unweighted (see weighted_sample_rows)
-        dtr, dva = fold_datasets(d, tr, w, va, wdir)
+        dtr, dva = fold_datasets(d, tr, w, va, wdir, overrides)
         shutil.rmtree(wdir)
         log(f"fold {k} data", train_rows=len(tr), train_pos=int(d.y[tr].sum()), valid_rows=len(va),
             train_s1=int(train.sum()), dropped_s1=int(drop.sum()), weighted_rows=int((w > 1).sum()),
             ext_rows_kept=int((~d.in_v1[tr]).sum()))
-        bst = fit_ds(dtr, rounds, dva)
+        bst = fit_ds(dtr, rounds, dva, overrides=overrides)
         del dtr, dva
         bst.save_model(out_m / f"fold_{k}{tag}.txt")
         folds.append({"fold": k, "best_iter": bst.best_iteration, "train_rows": len(tr), "valid_rows": len(va),
@@ -308,9 +445,9 @@ def run(s1: pl.DataFrame, d: Data, tag: str, smoke: bool, log: Log) -> None:
     boosters = [lgb.Booster(model_file=str(out_m / f"fold_{k}{tag}.txt")) for k in range(MC["n_folds"])]
     p_std = d.predict(boosters)
     log("OOF (a) predicted")
-    drop = drop_mask(s1.height, SEED + 2000)
+    drop = dropped(s1, SEED + 2000)
     keep = ~drop[d.code]
-    world(d.meta, keep, work / "eval", log)
+    context("train", dead_s1k(SEED + 2000), work / "eval", d.i, log)
     p_td = d.predict(boosters, work / "eval", keep)
     shutil.rmtree(work)
     log("OOF (b) predicted")
@@ -343,7 +480,7 @@ def curve(s1: pl.DataFrame, d: Data, tag: str, log: Log) -> None:
     drop, train, _ = split_fold(s1, 0)
     order = np.random.default_rng(SEED + 4000).permutation(np.flatnonzero(train))
     hard = d.meta["hard"].to_numpy()
-    world(d.meta, ~drop[d.code], work / "fold0", log)
+    context("train", dead_s1k(SEED + 1000), work / "fold0", d.i, log)
     sets = {}
     for fr in FC["curve_fracs"]:
         sub = np.zeros(s1.height, bool)
@@ -351,9 +488,9 @@ def curve(s1: pl.DataFrame, d: Data, tag: str, log: Log) -> None:
         tr = sample_rows(np.flatnonzero(sub[d.code]), d.y, hard, np.random.default_rng(SEED))
         sets[fr] = (tr, int(sub.sum()), d.gather(tr, work / "fold0"))
         log(f"curve data {fr}", train_rows=len(tr))
-    dropE = drop_mask(s1.height, SEED + 2000)
+    dropE = dropped(s1, SEED + 2000)
     keepE = ~dropE[d.code]
-    world(d.meta, keepE, work / "eval", log)
+    context("train", dead_s1k(SEED + 2000), work / "eval", d.i, log)
     rows0 = np.flatnonzero((d.fold == 0) & keepE)
     X0 = d.gather(rows0, work / "eval")
     shutil.rmtree(work)
@@ -385,9 +522,9 @@ def preflight_point(frac: float, log: Log) -> dict:
     log("preflight meta", frac=frac, rows=len(d.i), s1=s1.height)
     drop, train, inner = split_fold(s1, 0)
     wdir = path("features_dir") / f"_worlds_preflight_{frac}" / "fold0"
-    world(d.meta, ~drop[d.code], wdir, log)
+    context("train", dead_s1k(SEED + 1000), wdir, d.i, log)
     tr, w = weighted_sample_rows(np.flatnonzero(train[d.code]), d.y, d.meta["hard"].to_numpy(), d.in_v1,
-                                 np.random.default_rng(SEED))
+                                 np.random.default_rng(SEED), s1["ntrue"].to_numpy()[d.code])
     dtr, dva = fold_datasets(d, tr, w, np.flatnonzero(inner[d.code]), wdir)
     shutil.rmtree(wdir.parent)
     t1 = time.monotonic()
@@ -426,6 +563,59 @@ def preflight(log: Log) -> None:
     log("preflight done", **{f"{k}_at1": v for k, v in at1.items()})
 
 
+def ab(log: Log) -> None:
+    """20% S1 sample, fold 0, fast params (learning_rate_fast/max_rounds_fast, see --fast): 2x2 grid of
+    cv_full.macro_weight (on/off, patched into FC for this process -- diagnostic-only, never the real pipeline)
+    x decision rule (score = global t, score_expected = per-S1 expected-F0.5). One world/fit per macro_weight
+    arm (the weight changes what's fit); both decision rules are scored off the same fitted p. Same
+    world/scope machinery as src.ab_test, restricted to one fold."""
+    s1 = s1_table(0.2)
+    d = Data(s1)
+    log("A/B meta", rows=len(d.i), s1=s1.height, pos=int(d.y.sum()))
+    overrides = {"learning_rate": MC["learning_rate_fast"], "num_threads": perf_cores()}
+    rounds = min(MC["num_boost_round"], MC["max_rounds_fast"])
+
+    hard = d.meta["hard"].to_numpy()
+    drop, train, inner = split_fold(s1, 0)
+    work = path("features_dir") / "_worlds_ab"
+    context("train", dead_s1k(SEED + 1000), work / "fold0", d.i, log)
+    dropE = dropped(s1, SEED + 2000)
+    keepE = ~dropE[d.code]
+    context("train", dead_s1k(SEED + 2000), work / "eval", d.i, log)
+    rows0 = np.flatnonzero((d.fold == 0) & keepE)
+    X0 = d.gather(rows0, work / "eval")
+    scope = (s1["fold"].to_numpy() == 0) & ~dropE
+    ntrue_row = s1["ntrue"].to_numpy()[d.code]
+
+    results, prev_mw = [], FC["macro_weight"]
+    for mw in (False, True):
+        FC["macro_weight"] = mw
+        tr, w = weighted_sample_rows(np.flatnonzero(train[d.code]), d.y, hard, d.in_v1,
+                                     np.random.default_rng(SEED), ntrue_row)
+        va = np.flatnonzero(inner[d.code])
+        X, Xv = d.gather(tr, work / "fold0"), d.gather(va, work / "fold0")
+        bst = fit(X, d.y[tr], d.feats, rounds, valid=(Xv, d.y[va]), weight=w, overrides=overrides)
+        del X, Xv
+        p = np.full(len(d.i), np.nan, np.float32)
+        p[rows0] = bst.predict(X0, num_iteration=bst.best_iteration)
+        for rule, scorer in (("global_t", score), ("expected_f05", score_expected)):
+            r = scorer(s1, d, p, scope)
+            results.append({"macro_weight": mw, "decision": rule, "macro_f05": r["macro_f05"],
+                            "f05_singleton": r["f05_singleton"], "f05_nonsingleton": r["f05_nonsingleton"],
+                            "best_iter": bst.best_iteration})
+            log(f"ab macro_weight={mw} {rule}", macro_f05=round(r["macro_f05"], 5))
+    shutil.rmtree(work)
+    FC["macro_weight"] = prev_mw  # restore in case anything else in-process reads FC after this
+
+    print(f"\n{'macro_weight':>13s} {'decision':>13s} {'macro_f05':>10s} {'f05_singleton':>13s} "
+          f"{'f05_nonsingleton':>16s} {'best_iter':>9s}")
+    for r in results:
+        print(f"{str(r['macro_weight']):>13s} {r['decision']:>13s} {r['macro_f05']:10.5f} "
+              f"{r['f05_singleton']:13.5f} {r['f05_nonsingleton']:16.5f} {r['best_iter']:9d}")
+    (path("oof_dir") / "ab_decide.json").write_text(json.dumps(results, indent=1))
+    log.dump(path("oof_dir") / "ab_decide_timing.json")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     g = ap.add_mutually_exclusive_group()
@@ -433,7 +623,10 @@ def main() -> None:
     g.add_argument("--curve", action="store_true")
     g.add_argument("--preflight", action="store_true")
     g.add_argument("--preflight-point", type=float, help=argparse.SUPPRESS)  # internal: one preflight subprocess
+    g.add_argument("--ab", action="store_true", help="20%% S1, fold 0, fast params: macro_weight x decision-layer grid")
     ap.add_argument("--smoke", action="store_true")
+    ap.add_argument("--split", choices=("train", "test"), default="train", help="--check only")
+    ap.add_argument("--fast", action="store_true", help="lower learning_rate/round cap + num_threads=perf cores")
     a = ap.parse_args()
     log, tag = Log(), "_smoke" if a.smoke else ""
     if a.preflight_point is not None:
@@ -443,29 +636,35 @@ def main() -> None:
         preflight(log)
         log.dump(path("oof_dir") / "cv_full_timing_preflight.json")
         return
-    s1 = s1_table(0.02 if a.smoke else 1.0)
-    d = Data(s1)
-    log("meta", rows=len(d.i), s1=s1.height, pos=int(d.y.sum()), n_feats=len(d.feats))
-    mode = "check" if a.check else "curve" if a.curve else "cv"
-    if a.check:
+    if a.ab:
+        ab(log)
+        return
+    if a.check:  # no Data: context() alone, so the same check covers test (the world = test as-is)
         assert not a.smoke, "--check runs on all rows"
-        wdir = path("features_dir") / "_worlds" / "check"
-        world(d.meta, np.ones(len(d.i), bool), wdir, log)
-        bad = {}
-        for c in REC_COLS:
-            stored = pl.scan_parquet(d.files).select(pl.col(c).cast(pl.Float32)).collect().to_series().to_numpy()
+        wdir = path("features_dir") / "_worlds" / f"check_{a.split}"
+        context(a.split, pl.Series("s1k", [], pl.Int64), wdir, None, log)
+        files, bad, cols = feature_files(a.split), {}, sorted(p.stem for p in wdir.glob("*.npy"))
+        for c in cols:
+            stored = pl.scan_parquet(files).select(pl.col(c).cast(pl.Float32)).collect().to_series().to_numpy()
             got = np.load(wdir / f"{c}.npy")
             ne = int((~((stored == got) | (np.isnan(stored) & np.isnan(got)))).sum())
             if ne:
                 bad[c] = ne
         shutil.rmtree(wdir)
-        assert not bad, f"no-drop world differs from stored features (rows per column): {bad}"
-        log("check OK", columns=len(REC_COLS))
-        check_weighted_sampling(log)
-    elif a.curve:
+        assert not bad, f"no-drop context() differs from stored {a.split} features (rows per column): {bad}"
+        log("check OK", split=a.split, columns=len(cols), missing=sorted(set(REC_COLS) - set(cols)))
+        if a.split == "train":
+            check_weighted_sampling(log)
+        log.dump(path("oof_dir") / f"cv_full_timing_check_{a.split}.json")
+        return
+    s1 = s1_table(0.02 if a.smoke else 1.0)
+    d = Data(s1)
+    log("meta", rows=len(d.i), s1=s1.height, pos=int(d.y.sum()), n_feats=len(d.feats))
+    mode = "curve" if a.curve else "cv"
+    if a.curve:
         curve(s1, d, tag, log)
     else:
-        run(s1, d, tag, a.smoke, log)
+        run(s1, d, tag, a.smoke, log, a.fast)
     log.dump(path("oof_dir") / f"cv_full_timing_{mode}{tag}.json")
 
 

@@ -8,7 +8,8 @@ so train and test pools are the same function of the data.
             its record-centric rank-1 row (read from the grid).
   pre     = max over channels of norm_ch + n_channels_hit (at the pool m/k).
   gr_pre  = ordinal rank inside the S1 by pre desc, X_score desc, rec_id. gr_v1 = the same with the v1 set
-            (X rrank <= blocking.m or X srank <= blocking.k: the M3b candidates) ranked first.
+            (X rrank <= blocking.m or X srank <= blocking.k: the M3b candidates) ranked first. gr_v1r = gr_v1 with
+            R hits (R_rrank <= R_M) ranked above non-R rows inside each v1 tier.
 Candidates = rows with gr_{gate.variant} <= gate.n: at most n per S1 on either split.
 
 Run from code/business_entity_resolution/ (needs blockgrid_{split}_cap{df_cap}.parquet from src.block):
@@ -23,20 +24,53 @@ import shutil
 import numpy as np
 import polars as pl
 
-from .block import BCFG, CHANNELS, RANK_COLS, finalize, norm_path
+from .block import BCFG, CHANNELS, RANK_COLS, norm_path
 from .decide import md
 from .io import CFG, ROOT, StepLog, load_gt_pairs, path, write_candidates
 
 GCFG = CFG["gate"]
 PAIR = ["s1_id", "rec_id"]
-VARIANTS = ("pre", "v1")
+VARIANTS = ("pre", "v1", "v1r")
 N_MAX = max(GCFG["sweep_n"])
 REPORT = ROOT / "docs" / "blocking_v2.md"
 V1 = ((pl.col("X_rrank") <= BCFG["m"]) | (pl.col("X_srank") <= BCFG["k"])).fill_null(False)
+R_M = 3  # src.block_r keeps top-3; hardcoded there too -- this is the OR-branch cutoff, not a sweep knob
+
+
+def blockr_path(split: str):
+    return path("interim_dir") / f"blockr_{split}.parquet"
 
 
 def grid(split: str) -> pl.LazyFrame:
-    return pl.scan_parquet(path("interim_dir") / f"blockgrid_{split}_cap{BCFG['df_cap']}.parquet")
+    """blockgrid_{split} outer-joined with channel R (src.block_r): R-only pairs (no A/B/C/X hit at all) are
+    new rows here, RANK_COLS/n_channels_hit null until finalize()/r_hit below fold R's own hit back in."""
+    base = pl.scan_parquet(path("interim_dir") / f"blockgrid_{split}_cap{BCFG['df_cap']}.parquet")
+    rp = blockr_path(split)
+    if not rp.exists():  # optional until src.block_r has run for this split
+        return base.with_columns(R_score=pl.lit(None, pl.Float32), R_rrank=pl.lit(None, pl.Int16))
+    r = pl.scan_parquet(rp)
+    return base.join(r, on=PAIR, how="full", coalesce=True)
+
+
+def r_hit() -> pl.Expr:
+    return (pl.col("R_rrank") <= R_M).fill_null(False)
+
+
+def finalize_r(lf: pl.LazyFrame, m: int, k: int) -> pl.LazyFrame:
+    """Same cut as block.finalize(A/B/C/X) (ranks/scores outside m/k -> null, n_channels_hit over A-X), with
+    R unioned into the row filter and its own hit folded into n_channels_hit. R_rrank/R_score null past R_M,
+    same convention as every other channel's columns past its own cut."""
+    cols, hits = [], {}
+    for ch in CHANNELS:
+        r, s = pl.col(f"{ch}_rrank"), pl.col(f"{ch}_srank")
+        hits[ch] = (r <= m).fill_null(False) | (s <= k).fill_null(False)
+        cols += [pl.when(hits[ch]).then(pl.col(f"{ch}_score")).alias(f"{ch}_score"),
+                 pl.when(r <= m).then(r).alias(f"{ch}_rrank"), pl.when(s <= k).then(s).alias(f"{ch}_srank")]
+    hits["R"] = r_hit()
+    cols += [pl.when(hits["R"]).then(pl.col("R_score")).alias("R_score"),
+             pl.when(hits["R"]).then(pl.col("R_rrank")).alias("R_rrank")]
+    return (lf.filter(pl.any_horizontal(hits.values()))
+            .with_columns(*cols, n_channels_hit=pl.sum_horizontal(list(hits.values())).cast(pl.Int8)))
 
 
 def pool_dir(split: str, m: int):
@@ -45,30 +79,32 @@ def pool_dir(split: str, m: int):
 
 def in_pool(m: int) -> pl.Expr:
     return pl.any_horizontal([(pl.col(f"{ch}_rrank") <= m).fill_null(False)
-                              | (pl.col(f"{ch}_srank") <= GCFG["pool_k"]).fill_null(False) for ch in CHANNELS])
+                              | (pl.col(f"{ch}_srank") <= GCFG["pool_k"]).fill_null(False)
+                              for ch in CHANNELS] + [r_hit()])
 
 
 def rec_best(split: str) -> pl.DataFrame:
-    """rec_id -> {ch}_rbest = score of the record's record-centric rank-1 S1 in channel ch."""
-    one = {ch: pl.col(f"{ch}_rrank") == 1 for ch in CHANNELS}
+    """rec_id -> {ch}_rbest = score of the record's record-centric rank-1 S1 in channel ch (R included:
+    its only direction is record-centric, so R_rrank == 1 is its rank-1, same as A/B/C/X)."""
+    one = {ch: pl.col(f"{ch}_rrank") == 1 for ch in (*CHANNELS, "R")}
     return (grid(split).filter(pl.any_horizontal(list(one.values())))
             .group_by("rec_id").agg(*(pl.col(f"{ch}_score").filter(one[ch]).max().alias(f"{ch}_rbest")
-                                      for ch in CHANNELS))
+                                      for ch in (*CHANNELS, "R")))
             .collect(engine="streaming"))
 
 
 def gate_bucket(lf: pl.LazyFrame, best: pl.DataFrame) -> pl.DataFrame:
     norm = [pl.max_horizontal(pl.col(f"{ch}_score") / pl.col(f"{ch}_score").max().over("s1_id"),
-                              pl.col(f"{ch}_score") / pl.col(f"{ch}_rbest")).fill_null(0) for ch in CHANNELS]
+                              pl.col(f"{ch}_score") / pl.col(f"{ch}_rbest")).fill_null(0) for ch in (*CHANNELS, "R")]
     x = (lf.join(best.lazy(), on="rec_id", how="left")
          .with_columns(pre=(pl.max_horizontal(norm) + pl.col("n_channels_hit")).cast(pl.Float32), v1=V1,
                        n_pool=pl.len().over("s1_id").cast(pl.Int32))
-         .drop(*(f"{ch}_rbest" for ch in CHANNELS)).collect())
-    for name, first in (("gr_pre", []), ("gr_v1", [pl.col("v1")])):
+         .drop(*(f"{ch}_rbest" for ch in (*CHANNELS, "R"))).collect())
+    for name, first in (("gr_pre", []), ("gr_v1", [pl.col("v1")]), ("gr_v1r", [pl.col("v1"), r_hit()])):
         by = [*first, pl.col("pre"), pl.col("X_score").fill_null(0), pl.col("rec_id")]
         x = (x.sort([pl.col("s1_id"), *by], descending=[False, *[True] * (len(by) - 1), False])
              .with_columns(pl.int_range(1, pl.len() + 1, dtype=pl.Int32).over("s1_id").alias(name)))
-    return x.filter(pl.min_horizontal("gr_pre", "gr_v1") <= N_MAX)
+    return x.filter(pl.min_horizontal(*(f"gr_{v}" for v in VARIANTS)) <= N_MAX)
 
 
 def build(split: str, log: StepLog) -> None:
@@ -78,11 +114,11 @@ def build(split: str, log: StepLog) -> None:
     for m in ms:
         shutil.rmtree(pool_dir(split, m), ignore_errors=True)
         pool_dir(split, m).mkdir(parents=True)
-    src = finalize(grid(split), max(ms), K, CHANNELS)
+    src = finalize_r(grid(split), max(ms), K)
     for b in range(B):
         base = src.filter(pl.col("s1_id").hash(CFG["seed"]) % B == b).collect()
         for m in ms:  # finalize at a smaller m of the max-m pool == finalize of the grid at that m
-            x = gate_bucket(finalize(base.lazy(), m, K, CHANNELS), best)
+            x = gate_bucket(finalize_r(base.lazy(), m, K), best)
             x.write_parquet(pool_dir(split, m) / f"part-{b:03d}.parquet")
             log(f"{split} bucket {b} m{m}", pool_rows=x.height)
 
@@ -103,7 +139,8 @@ def evaluate(log: StepLog) -> None:
     gt = load_gt_pairs().select("s1_id", rec_id="match_id").join(s1["train"], on="s1_id")
     ntrue = s1["train"].join(gt.group_by("s1_id").len("ntrue"), on="s1_id", how="left").select(
         "s1_id", pl.col("ntrue").fill_null(0))
-    ref = (gt.lazy().join(grid("train").select(*PAIR, *(c for c in RANK_COLS if "rank" in c)), on=PAIR, how="left")
+    ref = (gt.lazy().join(grid("train").select(*PAIR, *(c for c in RANK_COLS if "rank" in c), "R_rrank"),
+                         on=PAIR, how="left")
            .with_columns(v1=V1, **{f"pool_m{m}": in_pool(m) for m in GCFG["sweep_m"]}).collect(engine="streaming"))
     log("eval: true pairs vs grid", pairs=ref.height)
 
@@ -120,7 +157,9 @@ def evaluate(log: StepLog) -> None:
                 "F0.5 ceiling": ceiling(ntrue, h.group_by("s1_id").agg(pl.col("h").sum())),
                 "v1 hits kept %": float(h.filter("v1")["h"].mean() * 100), "train cand/S1": tr_cand, **te}
 
-    rows = []
+    assert GCFG["m"] in GCFG["sweep_m"] and GCFG["n"] in GCFG["sweep_n"], \
+        f"gate.m={GCFG['m']}/gate.n={GCFG['n']} must be in gate.sweep_m/sweep_n to be evaluated"
+    rows, shipped = [], None
     ntr, nte = s1["train"].height, s1["test"].height
     rows.append(row("v1 (X m5/k10)", BCFG["m"], "-", ref, pl.col("v1"), tot["train"]["v1"] / ntr, {}))
     for m in GCFG["sweep_m"]:
@@ -129,7 +168,7 @@ def evaluate(log: StepLog) -> None:
     for m in GCFG["sweep_m"]:
         pools = {sp: pl.scan_parquet(pool_dir(sp, m) / "*.parquet") for sp in ("train", "test")
                  if pool_dir(sp, m).exists()}
-        f = (ref.lazy().join(pools["train"].select(*PAIR, "gr_pre", "gr_v1"), on=PAIR, how="left")
+        f = (ref.lazy().join(pools["train"].select(*PAIR, *(f"gr_{v}" for v in VARIANTS)), on=PAIR, how="left")
              .collect(engine="streaming"))
         assert f.height == ref.height, "duplicate pairs in the pool"
         size = {sp: s1[sp].join(lf.group_by("s1_id").agg(pl.col("n_pool").first()).collect(engine="streaming"),
@@ -146,7 +185,13 @@ def evaluate(log: StepLog) -> None:
                           **{f"test {k} cand/S1": float(c["test"][ctry == k].mean()) for k in sorted(set(ctry))}}
                 rows.append(row(f"gated {v}", m, n, f, (pl.col(f"gr_{v}") <= n).fill_null(False),
                                 float(c["train"].mean()), te))
+                if m == GCFG["m"] and n == GCFG["n"] and v == GCFG["variant"]:
+                    shipped = rows[-1]
         log(f"eval m{m}")
+    assert shipped["F0.5 ceiling"] >= GCFG["ceiling"], \
+        f"shipped config (m={GCFG['m']}, n={GCFG['n']}, variant={GCFG['variant']}) F0.5 ceiling " \
+        f"{shipped['F0.5 ceiling']:.4f} < gate.ceiling {GCFG['ceiling']}"
+    log("ceiling assert", **{"F0.5 ceiling": shipped["F0.5 ceiling"], "gate.ceiling": GCFG["ceiling"]})
     cols = list(dict.fromkeys(k for r in rows for k in r))
     rows = [{k: r.get(k, "") for k in cols} for r in rows]
     L = ["# Blocking v2 evaluation (M5-1)",
@@ -183,7 +228,7 @@ def apply(log: StepLog) -> None:
         v1_bak = I / f"candidates_{split}_v1.parquet"
         assert v1_bak.exists(), f"{v1_bak} missing -- v1 backup must exist before --apply (run once on the v1 config first)"
         pool = pl.scan_parquet(pool_dir(split, m) / "*.parquet").filter(pl.col(f"gr_{v}") <= n).select(
-            *PAIR, *RANK_COLS, "n_channels_hit")
+            *PAIR, *RANK_COLS, "R_score", "R_rrank", "n_channels_hit")
         if sib_on:
             schema = pool.collect_schema()
             new = pl.scan_parquet(sib_dir(split, delta) / "part-000.parquet").select(*PAIR)
@@ -191,7 +236,7 @@ def apply(log: StepLog) -> None:
             assert dup.height == 0, f"{split}: sibling pairs already in pool (join bug), {dup.height} rows"
             # rank/score/n_channels_hit columns don't exist for a sibling-only pair (it never scored in A/B/C/X);
             # null them at the pool's own dtypes so pl.concat(how="diagonal") doesn't hit a schema mismatch
-            filler = {c: pl.lit(None, dtype=schema[c]) for c in (*RANK_COLS, "n_channels_hit")}
+            filler = {c: pl.lit(None, dtype=schema[c]) for c in (*RANK_COLS, "R_score", "R_rrank", "n_channels_hit")}
             pool = pl.concat([pool, new.with_columns(**filler)], how="diagonal")
         pools[split] = pool.collect(engine="streaming")
         counts[split] = pools[split].height

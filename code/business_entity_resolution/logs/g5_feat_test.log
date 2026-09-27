@@ -1,0 +1,52 @@
+{'step': 'idf vocab', 's': 0.4, 'peak_rss_mb': 2860, 'n_tokens': 6686696}
+/Users/arnav/amlc2026/code/business_entity_resolution/src/features.py:169: DeprecationWarning: In Polars 2.0, the default behavior for `empty_as_null` will change to `False`. To keep the current behavior, explicitly set `empty_as_null=True`.
+  v = s1.select("country", "name_toks").explode("name_toks").drop_nulls().unique()
+{'step': 'S1 entities', 's': 8.4, 'peak_rss_mb': 5613, 'rows': 1732544}
+{'step': 'S2+S3 entities', 's': 41.9, 'peak_rss_mb': 15216, 'rows': 9969589}
+{'step': 'pass1 part 0', 's': 38.7, 'peak_rss_mb': 15216, 'rows': 2000000, 'total': 2000000}
+{'step': 'pass1 part 1', 's': 37.8, 'peak_rss_mb': 15590, 'rows': 2000000, 'total': 4000000}
+{'step': 'pass1 part 2', 's': 35.9, 'peak_rss_mb': 16595, 'rows': 2000000, 'total': 6000000}
+{'step': 'pass1 part 3', 's': 37.6, 'peak_rss_mb': 16595, 'rows': 2000000, 'total': 8000000}
+{'step': 'pass1 part 4', 's': 36.8, 'peak_rss_mb': 16595, 'rows': 2000000, 'total': 10000000}
+{'step': 'pass1 part 5', 's': 35.8, 'peak_rss_mb': 16595, 'rows': 2000000, 'total': 12000000}
+{'step': 'pass1 part 6', 's': 36.8, 'peak_rss_mb': 16595, 'rows': 2000000, 'total': 14000000}
+{'step': 'pass1 part 7', 's': 36.9, 'peak_rss_mb': 16595, 'rows': 2000000, 'total': 16000000}
+{'step': 'pass1 part 8', 's': 36.7, 'peak_rss_mb': 16595, 'rows': 2000000, 'total': 18000000}
+{'step': 'pass1 part 9', 's': 37.5, 'peak_rss_mb': 16595, 'rows': 2000000, 'total': 20000000}
+{'step': 'pass1 part 10', 's': 36.8, 'peak_rss_mb': 16595, 'rows': 2000000, 'total': 22000000}
+{'step': 'pass1 part 11', 's': 36.7, 'peak_rss_mb': 16595, 'rows': 2000000, 'total': 24000000}
+{'step': 'pass1 part 12', 's': 37.4, 'peak_rss_mb': 16595, 'rows': 2000000, 'total': 26000000}
+{'step': 'pass1 part 13', 's': 35.9, 'peak_rss_mb': 16595, 'rows': 2000000, 'total': 28000000}
+{'step': 'pass1 part 14', 's': 36.9, 'peak_rss_mb': 16595, 'rows': 2000000, 'total': 30000000}
+{'step': 'pass1 part 15', 's': 36.9, 'peak_rss_mb': 16595, 'rows': 2000000, 'total': 32000000}
+{'step': 'pass1 part 16', 's': 36.5, 'peak_rss_mb': 16595, 'rows': 2000000, 'total': 34000000}
+{'step': 'pass1 part 17', 's': 37.8, 'peak_rss_mb': 16595, 'rows': 2000000, 'total': 36000000}
+{'step': 'pass1 part 18', 's': 37.0, 'peak_rss_mb': 16595, 'rows': 2000000, 'total': 38000000}
+{'step': 'pass1 part 19', 's': 37.0, 'peak_rss_mb': 16595, 'rows': 2000000, 'total': 40000000}
+{'step': 'pass1 part 20', 's': 37.7, 'peak_rss_mb': 16595, 'rows': 2000000, 'total': 42000000}
+{'step': 'pass1 part 21', 's': 36.3, 'peak_rss_mb': 16595, 'rows': 2000000, 'total': 44000000}
+{'step': 'pass1 part 22', 's': 37.0, 'peak_rss_mb': 16595, 'rows': 2000000, 'total': 46000000}
+{'step': 'pass1 part 23', 's': 37.0, 'peak_rss_mb': 16595, 'rows': 2000000, 'total': 48000000}
+{'step': 'pass1 part 24', 's': 36.8, 'peak_rss_mb': 16595, 'rows': 2000000, 'total': 50000000}
+{'step': 'pass1 part 25', 's': 37.7, 'peak_rss_mb': 16595, 'rows': 2000000, 'total': 52000000}
+{'step': 'pass1 part 26', 's': 37.2, 'peak_rss_mb': 16595, 'rows': 2000000, 'total': 54000000}
+{'step': 'pass1 part 27', 's': 37.1, 'peak_rss_mb': 16595, 'rows': 2000000, 'total': 56000000}
+{'step': 'pass1 part 28', 's': 37.7, 'peak_rss_mb': 16595, 'rows': 2000000, 'total': 58000000}
+{'step': 'pass1 part 29', 's': 36.2, 'peak_rss_mb': 16595, 'rows': 2000000, 'total': 60000000}
+{'step': 'pass1 part 30', 's': 37.1, 'peak_rss_mb': 16595, 'rows': 2000000, 'total': 62000000}
+{'step': 'pass1 part 31', 's': 37.3, 'peak_rss_mb': 16595, 'rows': 2000000, 'total': 64000000}
+{'step': 'pass1 part 32', 's': 37.0, 'peak_rss_mb': 16595, 'rows': 2000000, 'total': 66000000}
+{'step': 'pass1 part 33', 's': 38.1, 'peak_rss_mb': 16595, 'rows': 2000000, 'total': 68000000}
+{'step': 'pass1 part 34', 's': 37.3, 'peak_rss_mb': 16595, 'rows': 2000000, 'total': 70000000}
+{'step': 'pass1 part 35', 's': 37.4, 'peak_rss_mb': 16595, 'rows': 2000000, 'total': 72000000}
+{'step': 'pass1 part 36', 's': 37.9, 'peak_rss_mb': 16595, 'rows': 2000000, 'total': 74000000}
+{'step': 'pass1 part 37', 's': 36.3, 'peak_rss_mb': 16595, 'rows': 2000000, 'total': 76000000}
+{'step': 'pass1 part 38', 's': 36.4, 'peak_rss_mb': 16595, 'rows': 1949788, 'total': 77949788}
+{'step': 'pass2 X_score', 's': 12.3, 'peak_rss_mb': 16595, 'rows': 77949788}
+{'step': 'pass2 A_score', 's': 8.1, 'peak_rss_mb': 16595, 'rows': 77949788}
+{'step': 'pass2 B_score', 's': 8.1, 'peak_rss_mb': 16595, 'rows': 77949788}
+{'step': 'pass2 C_score', 's': 8.1, 'peak_rss_mb': 16595, 'rows': 77949788}
+{'step': 'pass2 name_tset', 's': 8.2, 'peak_rss_mb': 16595, 'rows': 77949788}
+{'step': 'pass2 addr_tset', 's': 8.3, 'peak_rss_mb': 16595, 'rows': 77949788}
+{'step': 'assemble', 's': 12.2, 'peak_rss_mb': 16595, 'rows': 77949788, 'n_cols': 95, 'parts': 39}
+model feature list (93): ['A_score', 'A_rrank', 'A_srank', 'B_score', 'B_rrank', 'B_srank', 'C_score', 'C_rrank', 'C_srank', 'X_score', 'X_rrank', 'X_srank', 'n_channels_hit', 'name_ratio', 'name_tsort', 'name_tset', 'name_partial', 'name_jw', 'alias_best', 'name_len_diff', 's1_nonascii', 'rec_nonascii', 'legal_code', 'marker_code', 'addr_tset', 'num_code', 'street_eq', 'has_addr_code', 'is_s3', 'name_idfj', 'nbg_idfj', 'nskel_idfj', 'addr_idfj', 'askel_idfj', 's1_name_dup', 'num_rel_class', 'num_rel_absdiff', 'num_rel_reldiff', 'unmatched_cnt_a', 'unmatched_cnt_b', 'unmatched_max_idf_a', 'unmatched_max_idf_b', 'unmatched_char_sim', 'name_tset_dict', 'addr_tset_alias', 'locality_rel', 'cov_addr_rec', 'cov_addr_s1', 'cov_name_rec', 'cov_name_s1', 'addr_len_ratio', 'num_range_hit', 'num_absdiff_bucket', 'rec_name_novel', 'rec_name_all_novel', 'legal_s1_has', 'legal_rec_has', 'legal_rel', 'n_cand_rec', 'n_cand_s1', 'rec_name_hits95', 'twin_hits', 'X_score_drec', 'X_score_ds1', 'X_score_rkrec', 'X_score_rks1', 'X_score_gaprec', 'A_score_drec', 'A_score_ds1', 'A_score_rkrec', 'A_score_rks1', 'A_score_gaprec', 'B_score_drec', 'B_score_ds1', 'B_score_rkrec', 'B_score_rks1', 'B_score_gaprec', 'C_score_drec', 'C_score_ds1', 'C_score_rkrec', 'C_score_rks1', 'C_score_gaprec', 'name_tset_drec', 'name_tset_ds1', 'name_tset_rkrec', 'name_tset_rks1', 'name_tset_gaprec', 'addr_tset_drec', 'addr_tset_ds1', 'addr_tset_rkrec', 'addr_tset_rks1', 'addr_tset_gaprec', 'is_noaddr_ambiguous']

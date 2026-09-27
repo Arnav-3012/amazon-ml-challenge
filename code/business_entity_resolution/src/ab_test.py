@@ -19,7 +19,7 @@ from itertools import combinations
 
 import numpy as np
 
-from .cv_full import Data, drop_mask, s1_table, score, split_fold, weighted_sample_rows, world
+from .cv_full import Data, context, dead_s1k, drop_mask, s1_table, score, split_fold, weighted_sample_rows
 from .io import CFG, StepLog, path
 from .train import fit
 
@@ -33,6 +33,13 @@ GROUPS = {
     "b": ["num_rel_class", "num_rel_absdiff", "num_rel_reldiff"],
     "c": ["unmatched_cnt_a", "unmatched_cnt_b", "unmatched_max_idf_a", "unmatched_max_idf_b", "unmatched_char_sim"],
     "d": ["name_tset_dict"],
+    # M5-4 (task: locality alias / coverage / number-range / novelty / legal-relation / twin-hit features)
+    "alias": ["addr_tset_alias", "locality_rel"],
+    "cov": ["cov_addr_rec", "cov_addr_s1", "cov_name_rec", "cov_name_s1", "addr_len_ratio"],
+    "num2": ["num_range_hit", "num_absdiff_bucket"],
+    "novel": ["rec_name_novel", "rec_name_all_novel"],
+    "legal": ["legal_s1_has", "legal_rec_has", "legal_rel"],
+    "twin": ["twin_hits"],
 }
 
 
@@ -47,7 +54,7 @@ def main() -> None:
     hard = d.meta["hard"].to_numpy()
     drop, train, inner = split_fold(s1, 0)
     work = path("features_dir") / "_worlds_ab"
-    world(d.meta, ~drop[d.code], work / "fold0", log)
+    context("train", dead_s1k(SEED + 1000), work / "fold0", d.i, log)
     tr, w = weighted_sample_rows(np.flatnonzero(train[d.code]), d.y, hard, d.in_v1, np.random.default_rng(SEED))
     va = np.flatnonzero(inner[d.code])
     X, Xv = d.gather(tr, work / "fold0"), d.gather(va, work / "fold0")
@@ -55,7 +62,7 @@ def main() -> None:
     # eval side: test-density world; score only fold-0 S1s that survive the drop
     dropE = drop_mask(s1.height, SEED + 2000)
     keepE = ~dropE[d.code]
-    world(d.meta, keepE, work / "eval", log)
+    context("train", dead_s1k(SEED + 2000), work / "eval", d.i, log)
     rows0 = np.flatnonzero((d.fold == 0) & keepE)
     X0 = d.gather(rows0, work / "eval")
     shutil.rmtree(work)

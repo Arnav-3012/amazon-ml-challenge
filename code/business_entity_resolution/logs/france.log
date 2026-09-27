@@ -1,0 +1,5 @@
+actual country values (raw S1): ['France', 'India', 'US']
+{'step': 'load_s1', 's': 1.7, 'peak_rss_mb': 1743, 'n': 1732544}
+{'step': 'load_test_p', 's': 0.2, 'peak_rss_mb': 2102, 'n': 60901445}
+{'step': 'argmax', 's': 4.4, 'peak_rss_mb': 10345, 'n': 1430356}
+STOP: peak RSS 10345 MB > 10000 MB after 'argmax'

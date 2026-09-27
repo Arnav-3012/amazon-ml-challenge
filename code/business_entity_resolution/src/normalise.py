@@ -14,7 +14,7 @@ import argparse
 import json
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import polars as pl
 from anyascii import anyascii
@@ -24,9 +24,9 @@ from .io import load_source, path, peak_rss_mb  # noqa: F401  (peak_rss_mb re-ex
 # Rule names in execution order (see docs/normalise.md). Structural steps (lowercase, punct/whitespace
 # strip, address component parse) always run; everything listed here can be ablated.
 NAME_RULES = ("anyascii", "alias_split", "id_tag", "acronym_dots", "domain_strip", "trailing_phone", "digit_fix",
-              "dedupe_adjacent", "legal_form", "honorifics")
+              "dedupe_adjacent", "token_map", "legal_form", "honorifics")
 # Reverted after the M3a ablation (docs/decisions_mistakes.md): country_marker, amp_and, landmark.
-ADDR_RULES = ("number_prefix", "street_type", "ordinal", "null_token", "admin_region")
+ADDR_RULES = ("number_prefix", "street_type", "ordinal", "num_zeros", "null_token", "admin_region")
 RULES = NAME_RULES + ADDR_RULES  # anyascii applies to both fields
 
 OUT_COLS = ["entity_id", "business_name", "business_address", "country",
@@ -76,20 +76,38 @@ class Lex:
     legal: dict[str, str]
     street: dict[str, str]
     region: dict[str, str]
+    name: dict[str, str] = field(default_factory=dict)  # whole-token name rewrites (token_map)
 
 
-_LEGAL_US = _forms("llc|inc=incorporated=lnc|corp=corporation|co=company|ltd=limited|lp|llp|pllc|pc|plc")
+# llp=elelpi: anyascii of Devanagari/Bengali LLP (एलएलपी, এলএলপি); dotted/accented FR forms (s.a.s., sàrl) are
+# already folded by acronym_dots + anyascii. FR forms stay out of US/India: sa/sas/sci/ei are initials there
+# (India test S1: sas 114, sa 93, ei 31, sci 17 core-name tokens).
+_LEGAL_US = _forms("llc|inc=incorporated=lnc|corp=corporation|co=company|ltd=limited|lp|llp=elelpi|pllc|pc|plc")
 # India: anyascii of Devanagari legal words (praivet, piraivet, praibhet, elelpi) + typos/truncations
 # (noise_ops legal spelling pairs; the long tail of one-off 'private' typos is left unmapped, ~0.4% of pairs).
 _LEGAL_IN = _forms("pvt=private=praivet=piraivet=praibhet=praivrr=pra|ltd=limited=limitet=limirrd=limtid=li|"
                    "llp=elelpi|co=company|inc=lnc|corp=corporation|llc")
-_LEGAL_FR = _forms("sarl|sas|sasu|sa|eurl|sci|snc|ei|selarl")
+_LEGAL_FR = _forms("sarl|sas|sasu|sa|eurl|sci|snc|ei|selarl|llp=elelpi")
 
 _STREET_US = _forms("st=street=saint|rd=road|dr=drive|ave=avenue=av|ln=lane|blvd=boulevard|ct=court|"
                     "cir=circle|pl=place|ter=terrace|hwy=highway|trl=trail")
 _STREET_IN = _forms("rd=road|st=street|nagar=ngr")
 _STREET_FR = _forms("rue=r|ave=avenue=av|blvd=boulevard=bd|route=rte|allee=all|place=pl|impasse=imp|"
                     "chemin=ch=chem|st=saint|ste=sainte")
+# Mined from TEST inputs (docs/france_deep.md §E: token pairs on France test pairs with p>=0.98; France is
+# test-only). Kept: address pairs >=200, name pairs >=60 (+ culb/cbu). Rejected because the record-side token
+# is frequent France test-S1 vocabulary (>=100 occurrences): b 1665, t 154, res 101 (single letters always out).
+# ets is exempt: 5258/5307 S1 uses are the "Ets X" prefix itself; only 2 S1 names are bare "ets" (collision case).
+_ADDR_FR = _forms("cours=crs|quai=q|passage=pass|ave=aveue=avnue=aveneu=aveune=avene|allee=alee")
+_STREET_FR |= _ADDR_FR
+# maisondesant is a whole collapsed record name; S1 reads "maison de sante ..." (2386 France S1 names).
+_NAME_FR = _forms("club=cb=clb=cub=culb=cbu|centre=center|pharmacie=farmacie|fils=fs|maison de sante=maisondesant|"
+                   "etablissements=ets")
+# Non-canonical tokens the changes above rewrite; rows holding none of them must normalise byte-identically.
+# elelpi/llp: new legal-form entries (India+unseen already had elelpi; llp is new to _LEGAL_FR/_LEGAL_US, so a
+# raw "LLP" token in a France/US name now gets extracted into legal_form where it previously stayed in core_name.
+TOUCHED = sorted({k for d in (_ADDR_FR, _NAME_FR) for k, v in d.items() if k != v} | {"elelpi", "llp"})
+ZERO_PAD_RE = r"^0\d{1,3}$"  # 003, 0011; >=5 digits are postal/ZIP/PIN codes and are compared whole
 
 _REGION_US = _forms(
     "al=alabama|ak=alaska|az=arizona|ar=arkansas|ca=california|co=colorado|ct=connecticut|de=delaware|"
@@ -119,7 +137,7 @@ _REGION_FR = _forms(
 
 LEX = {"US": Lex(_LEGAL_US, _STREET_US, _REGION_US),
        "India": Lex(_LEGAL_IN, _STREET_IN, _REGION_IN),
-       "France": Lex(_LEGAL_FR, _STREET_FR, _REGION_FR)}
+       "France": Lex(_LEGAL_FR, _STREET_FR, _REGION_FR, _NAME_FR)}
 # Unseen country: legal forms only (the union has no conflicting canonicals); street/region maps collide.
 DEFAULT_LEX = Lex(_LEGAL_US | _LEGAL_IN | _LEGAL_FR, {}, {})
 
@@ -203,6 +221,8 @@ def _normalise_one(df: pl.DataFrame, lex: Lex, off: frozenset[str]) -> pl.DataFr
                              .list.join(" "))
     if on("dedupe_adjacent"):
         df = _dedupe_adjacent(df)
+    if on("token_map") and lex.name:
+        df = df.with_columns(_n=n.str.split(" ").list.eval(E.replace(lex.name)).list.join(" "))
     if on("legal_form"):
         legal_re = _words_re(lex.legal)
         core = _squash(n.str.replace_all(legal_re, ""))
@@ -227,8 +247,11 @@ def _normalise_one(df: pl.DataFrame, lex: Lex, off: frozenset[str]) -> pl.DataFr
     if on("number_prefix"):
         df = df.with_columns(_a=a.str.replace_all(ADDR_PREFIX_RE, "${1}").str.replace_all(HN_PREFIX_RE, ""))
     tok_map = (lex.street if on("street_type") else {}) | (ORDINALS if on("ordinal") else {})
-    if tok_map:
-        df = df.with_columns(_a=a.str.split(" ").list.eval(E.replace(tok_map)).list.join(" "))
+    tok = E.replace(tok_map) if tok_map else E
+    if on("num_zeros"):  # addr_number already drops zero padding; this aligns addr_tokens (003 == 3)
+        tok = pl.when(tok.str.contains(ZERO_PAD_RE)).then(tok.str.replace(r"^0+(\d)", "${1}")).otherwise(tok)
+    if tok_map or on("num_zeros"):
+        df = df.with_columns(_a=a.str.split(" ").list.eval(tok).list.join(" "))
     comp = E.str.replace_all(r"\s+", " ").str.strip_chars()
     bad = (comp == "") | (comp.is_in(NULLS) | comp.str.contains(JUNK_COMP_RE) if on("null_token") else False)
     df = df.with_columns(_c=a.str.split(",").list.eval(pl.when(bad).then(NULL_STR).otherwise(comp)).list.drop_nulls())
@@ -265,20 +288,37 @@ def normalise(df: pl.DataFrame, off: frozenset[str] = frozenset()) -> pl.DataFra
     return pl.concat(parts).sort("_i").drop("_i")
 
 
+def assert_untouched(old: pl.DataFrame, new: pl.DataFrame, name: str) -> None:
+    """Rows whose previous tokens hold no TOUCHED / zero-padded token must come out byte-identical."""
+    assert old.columns == new.columns and old.height == new.height, f"{name}: shape/columns changed"
+    hit = E.is_in(TOUCHED)
+    touched = old.select((pl.col("name_tokens").list.eval(hit).list.any()
+                          | pl.col("addr_tokens").list.eval(hit | E.str.contains(ZERO_PAD_RE)).list.any())
+                         .fill_null(False)).to_series()
+    assert old.filter(~touched).equals(new.filter(~touched)), f"{name}: untouched rows changed"
+    print(f"{name}: untouched rows identical; touched {touched.sum()}/{old.height}", flush=True)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--smoke", type=int, default=0, help="first N rows per file; print only, write nothing")
+    ap.add_argument("--split", choices=("train", "test"), nargs="+", default=["train", "test"])
     args = ap.parse_args()
+    print("France token_map accepted:", {k: v for d in (_NAME_FR, _ADDR_FR) for k, v in d.items() if k != v})
+    print("France token_map rejected (frequent France S1 token):", ["b", "t", "res"])
     out = path("interim_dir")
     out.mkdir(parents=True, exist_ok=True)
     timing = []
-    for split in ("train", "test"):
+    for split in args.split:
         for n in (1, 2, 3):
             t0 = time.perf_counter()
             raw = pl.from_pandas(load_source(split, n, nrows=args.smoke or None))
             t1 = time.perf_counter()
             df = normalise(raw)
             t2 = time.perf_counter()
+            prev = out / f"norm_{split}_s{n}.parquet"
+            if prev.exists():  # lean: holds old+new in RAM (~2x one file) - fine at 5.3M rows
+                assert_untouched(pl.read_parquet(prev, n_rows=args.smoke or None), df, f"{split}_s{n}")
             row = {"file": f"{split}_s{n}", "rows": df.height, "load_s": round(t1 - t0, 1),
                    "normalise_s": round(t2 - t1, 1), "peak_rss_mb": peak_rss_mb()}
             if args.smoke:
@@ -292,8 +332,10 @@ def main() -> None:
             row["total_s"] = round(time.perf_counter() - t0, 1)
             timing.append(row)
             print(row, flush=True)
-    if not args.smoke:
-        (out / "norm_timing.json").write_text(json.dumps(timing, indent=1))
+    if not args.smoke:  # merge by file so a single-split run keeps the other split's rows
+        tp = out / "norm_timing.json"
+        rows = {r["file"]: r for r in (json.loads(tp.read_text()) if tp.exists() else [])} | {r["file"]: r for r in timing}
+        tp.write_text(json.dumps(sorted(rows.values(), key=lambda r: r["file"]), indent=1))
 
 
 if __name__ == "__main__":

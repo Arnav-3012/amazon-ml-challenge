@@ -1,0 +1,5 @@
+{'step': 'load test texts', 's': 0.4, 'peak_rss_mb': 2338}
+{'step': 'test scope', 's': 0.2, 'peak_rss_mb': 3381, 'pairs': 6033243}
+{'step': 'resume', 's': 0.2, 'peak_rss_mb': 3381, 'already_scored': 10000, 'to_score': 6023243}
+Loading weights:   0%|          | 0/105 [00:00<?, ?it/s]Loading weights: 100%|██████████| 105/105 [00:00<00:00, 11428.03it/s]
+{'step': 'score test chunk', 's': 99.3, 'peak_rss_mb': 4358, 'pairs': 200000, 'of': 6023243, 'secs': 96.7, 'pairs_per_s': 2067.5, 'eta_min': 46.9}

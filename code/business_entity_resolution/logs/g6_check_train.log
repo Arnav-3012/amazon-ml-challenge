@@ -1,0 +1,18 @@
+/Users/arnav/amlc2026/code/business_entity_resolution/src/cv_full.py:183: DeprecationWarning: In Polars 2.0, the default behavior for `empty_as_null` will change to `False`. To keep the current behavior, explicitly set `empty_as_null=True`.
+  voc = s1e.select("country", tok="name_tokens").explode("tok").drop_nulls().unique().with_columns(_in=pl.lit(True))
+/Users/arnav/amlc2026/code/business_entity_resolution/src/cv_full.py:186: DeprecationWarning: In Polars 2.0, the default behavior for `empty_as_null` will change to `False`. To keep the current behavior, explicitly set `empty_as_null=True`.
+  x = (rec.select(reck=id_key("entity_id"), country="country", tok="name_tokens").explode("tok")
+{'step': 'context train check_train', 's': 84.7, 'peak_rss_mb': 11485, 'kept_rows': 99279505, 'removed_rows': 0, 'cols': 29}
+{'step': 'check OK', 's': 7.1, 'peak_rss_mb': 11485, 'split': 'train', 'columns': 29, 'missing': []}
+[100]	heldout's binary_logloss: 0.366082
+[200]	heldout's binary_logloss: 0.362283
+[100]	heldout's binary_logloss: 0.367257
+[200]	heldout's binary_logloss: 0.365564
+{'step': 'check weighted sampling seed 42', 's': 11.7, 'peak_rss_mb': 11485, 'logloss_full': 0.3622090587497783, 'logloss_weighted': 0.36483816495375, 'rel_diff': 0.007258532442690527, 'train_rows_full': 500000, 'train_rows_weighted': 386552, 'max_weight': 20.0}
+[100]	heldout's binary_logloss: 0.370251
+[200]	heldout's binary_logloss: 0.370299
+{'step': 'check weighted sampling seed 43', 's': 5.7, 'peak_rss_mb': 11485, 'logloss_full': 0.3622090587497783, 'logloss_weighted': 0.36908311865714044, 'rel_diff': 0.018978155684700487, 'train_rows_full': 500000, 'train_rows_weighted': 386549, 'max_weight': 20.0}
+[100]	heldout's binary_logloss: 0.365489
+[200]	heldout's binary_logloss: 0.363319
+{'step': 'check weighted sampling seed 44', 's': 5.7, 'peak_rss_mb': 11485, 'logloss_full': 0.3622090587497783, 'logloss_weighted': 0.36309817758340335, 'rel_diff': 0.0024547117531901557, 'train_rows_full': 500000, 'train_rows_weighted': 386544, 'max_weight': 20.0}
+weighted-sampling check: rel_diff [0.00726, 0.01898, 0.00245] mean 0.00956, max weight 20

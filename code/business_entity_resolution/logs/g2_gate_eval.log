@@ -1,0 +1,6 @@
+{'step': 'eval: true pairs vs grid', 's': 8.4, 'peak_rss_mb': 8362, 'pairs': 7638365}
+{'step': 'eval: grid counts', 's': 9.2, 'peak_rss_mb': 8362}
+{'step': 'eval m5', 's': 10.9, 'peak_rss_mb': 8362}
+{'step': 'eval m10', 's': 9.4, 'peak_rss_mb': 8362}
+{'step': 'ceiling assert', 's': 0.0, 'peak_rss_mb': 8362, 'F0.5 ceiling': 0.9945527209463803, 'gate.ceiling': 0.993}
+{'step': 'eval report', 's': 0.0, 'peak_rss_mb': 8362, 'path': '/Users/arnav/amlc2026/docs/blocking_v2.md'}
