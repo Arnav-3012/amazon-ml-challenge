@@ -1,5 +1,20 @@
 # Business Entity Resolution — Amazon ML Challenge 2026
 
+![Python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)
+![LightGBM](https://img.shields.io/badge/LightGBM-4.7-2E8B57)
+![Polars](https://img.shields.io/badge/Polars-1.44-CD792C?logo=polars&logoColor=white)
+![scikit-learn](https://img.shields.io/badge/scikit--learn-1.9-F7931E?logo=scikitlearn&logoColor=white)
+![PyTorch](https://img.shields.io/badge/PyTorch-2.14-EE4C2C?logo=pytorch&logoColor=white)
+![Hugging Face](https://img.shields.io/badge/sentence--transformers-6.1-FFD21E?logo=huggingface&logoColor=black)
+![Apple Silicon](https://img.shields.io/badge/M4_Pro-24GB-000000?logo=apple&logoColor=white)
+
+![Public LB](https://img.shields.io/badge/public_LB_(macro_F0.5)-0.971-2F81F7)
+![OOF](https://img.shields.io/badge/local_OOF-0.9746-2F81F7)
+![Candidates](https://img.shields.io/badge/candidates%2FS1-%E2%89%A445-2F81F7)
+![Blocking ceiling](https://img.shields.io/badge/blocking_ceiling-0.9946-2F81F7)
+![Scale](https://img.shields.io/badge/train_S1_entities-2.2M-2F81F7)
+![External data](https://img.shields.io/badge/external_data-none-555555)
+
 Links business records from three vendors that share **no common ID**. For every clean Source 1 business,
 the pipeline finds every Source 2 / Source 3 record that describes the same real-world business
 (zero, one or many), using only `business_name`, `business_address` and `country`.
