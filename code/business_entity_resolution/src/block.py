@@ -27,17 +27,22 @@ Run from code/business_entity_resolution/:
   python -m src.block --split train --smoke 300000   # first N rows per file; *_smoke outputs; prints nnz/s
   python -m src.block --split train                  # blockgrid_train_cap1000 + idf_train
   python -m src.block --split test                   # blockgrid_test_cap1000 + idf_test
+  python -m src.block --split train --finalize        # v1 candidates_train (grid cut to blocking m/k/select)
+  python -m src.block --split test --finalize         # v1 candidates_test + output/candidate_pairs.tsv
+--finalize is the candidate set the submitted model (M5-2 cv_full, v1 candidates) was trained and scored on;
+src.gate --apply writes the (not submitted) v2 set instead.
 """
 import argparse
 import json
 import shutil
 import time
+from pathlib import Path
 
 import numpy as np
 import polars as pl
 import scipy.sparse as sp
 
-from .io import CFG, path
+from .io import CFG, path, write_candidates
 from .normalise import peak_rss_mb
 from .phonetic import add_skeletons
 
@@ -244,6 +249,21 @@ def finalize(lf: pl.LazyFrame, m: int, k: int, select: tuple[str, ...] = CHANNEL
             .with_columns(*cols, n_channels_hit=pl.sum_horizontal(list(hits.values())).cast(pl.Int8)))
 
 
+def finalize_v1(split: str, cap: int, out: Path | None = None) -> None:
+    """v1 candidates: blockgrid_{split}_cap{cap} cut to blocking m/k/select (identical to a direct m/k run: ranks
+    are intrinsic to each direction; both grids hold ranks >= m/k). Test also writes output/candidate_pairs.tsv."""
+    d = path("interim_dir")
+    out = out or d / f"candidates_{split}.parquet"
+    finalize(pl.scan_parquet(d / f"blockgrid_{split}_cap{cap}.parquet"), BCFG["m"], BCFG["k"],
+             tuple(BCFG["select"])).sink_parquet(out)
+    n = pl.scan_parquet(out).select(pl.len()).collect().item()
+    print(f"candidates_{split}: {n:,} pairs (m={BCFG['m']}, k={BCFG['k']}, select={BCFG['select']}) -> {out}", flush=True)
+    if split == "test" and out == d / f"candidates_{split}.parquet":
+        s1_ids = pl.read_parquet(norm_path(split, 1), columns=["entity_id"])["entity_id"]
+        write_candidates(path("candidate_pairs"), pl.scan_parquet(out).select("s1_id", "rec_id"), s1_ids)
+        print(f"wrote {path('candidate_pairs')}", flush=True)
+
+
 def _fallback(ch: str) -> bool:
     return BCFG["fallback_rarest"] and ch in FALLBACK_CHANNELS
 
@@ -255,10 +275,14 @@ def main() -> None:
     ap.add_argument("--smoke", type=int, default=0, help="first N rows of each file; outputs get _smoke")
     ap.add_argument("--dry", action="store_true", help="df + survivor pass: zero-token %%, product nnz bound")
     ap.add_argument("--selftest", action="store_true", help="synthetic brute-force equivalence check")
+    ap.add_argument("--finalize", action="store_true",
+                    help="cut blockgrid_{split} to blocking m/k/select -> candidates_{split} (+ candidate_pairs.tsv on test)")
     a = ap.parse_args()
     if a.selftest:
         return _selftest()
     assert a.split, "--split is required"
+    if a.finalize:
+        return finalize_v1(a.split, a.df_cap)
     split, cap, budget = a.split, a.df_cap, float(BCFG["nnz_budget"])
     train = split == "train"
     m_max = max(BCFG["sweep_m"]) if train else max(CFG["gate"]["sweep_m"])

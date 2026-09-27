@@ -1,7 +1,6 @@
 """TSV I/O for the challenge files. Paths come from configs/config.yaml, resolved against the repo root."""
 import csv
 import json
-import resource
 import sys
 import time
 from collections.abc import Iterable, Mapping
@@ -24,6 +23,22 @@ def path(key: str) -> Path:
 
 
 def peak_rss_mb() -> float:
+    if sys.platform == "win32":  # no `resource` module: peak working set via psapi (kernel32 K32 export)
+        import ctypes
+        from ctypes import wintypes
+
+        class PMC(ctypes.Structure):
+            _fields_ = [("cb", wintypes.DWORD), ("PageFaultCount", wintypes.DWORD),
+                        *((f, ctypes.c_size_t) for f in ("PeakWorkingSetSize", "WorkingSetSize", "QuotaPeakPagedPoolUsage",
+                                                         "QuotaPagedPoolUsage", "QuotaPeakNonPagedPoolUsage",
+                                                         "QuotaNonPagedPoolUsage", "PagefileUsage", "PeakPagefileUsage"))]
+        k32 = ctypes.WinDLL("kernel32")
+        k32.GetCurrentProcess.restype = wintypes.HANDLE
+        k32.K32GetProcessMemoryInfo.argtypes = [wintypes.HANDLE, ctypes.POINTER(PMC), wintypes.DWORD]
+        pmc = PMC(cb=ctypes.sizeof(PMC))
+        assert k32.K32GetProcessMemoryInfo(k32.GetCurrentProcess(), ctypes.byref(pmc), pmc.cb), "GetProcessMemoryInfo failed"
+        return round(pmc.PeakWorkingSetSize / 2**20)
+    import resource
     rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss  # bytes on macOS, KiB on Linux
     return round(rss / 2**20 if sys.platform == "darwin" else rss / 2**10)
 

@@ -51,7 +51,8 @@ stage2:                 # M5-3 (src.stage2): stacked GBM on stage-1 OOF (b) p
   keep_gain: 0.002      # ship only if stage-2 OOF (b) >= stage-1 OOF (b) + this
 
 features:
-  chunk_rows: 2000000   # candidate pairs per pass-1 part (memory knob, not a result knob)
+  chunk_rows: 500000    # candidate pairs per pass-1 part (memory knob, not a result knob; was 2M)
+  prep_batch: 500000    # entity rows per record-table prep batch (memory knob, not a result knob)
 
 matcher:
   subset_fraction: 0.2  # iteration mode: first 20% of a seeded permutation of train S1 ids

@@ -75,3 +75,4 @@ Format: `path | purpose | what to check when something related breaks`. Update t
 - `code/business_entity_resolution/src/mine_dict.py` | standalone token-dictionary probe (India native transliteration + abbreviations), mined on 80% of train S1s, evaluated on the held-out 20%'s v1 misses; no pipeline change | KEY % in docs/mine_dict.md; needs candidates_train_v1.parquet + idf_train
 - `docs/mine_dict.md`, `artifacts/interim/token_dict.parquet` | mine_dict report / mappings (field, kind, s, t, co, n_src, share) | stale → rerun `python -m src.mine_dict`
 - `artifacts/logs/` | tee'd long-run logs + `diagnose_timing.json` | job died → tail the .log
+- `submission.zip` (repo root, built by the M8 zip step) | final submission: output/ TSVs + code/business_entity_resolution/ + Documentation_template.md | re-open: only those prefixes, CRC OK, TSVs byte-identical to output/

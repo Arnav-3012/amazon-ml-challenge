@@ -2,9 +2,11 @@
 the decide.py rule: per record keep its argmax-p S1 (ties -> lowest s1_id), keep it if p >= t (oof/decide.json).
 Writes output/matching_results.tsv (one row per test S1, "" when none) and asserts matches ⊆ candidates.
 --folds (M5-2): p = mean of models/fold_{k}.txt, t = best t of the test-density OOF (oof/cv_full.json, b); the
-scored pairs are also kept in oof/test_p.parquet (stage-2 input).
+scored pairs are also kept in oof/test_p.parquet (stage-2 input). --models N: mean of fold_0..fold_{N-1} only
+(default all n_folds). One fold model costs ~3 h on the 15.7 GB Windows machine (~15 h for all 5); OOF p is one
+fold model per row, so the OOF (b) t applies to a single model directly.
 
-Run from code/business_entity_resolution/:  python -m src.predict [--folds]
+Run from code/business_entity_resolution/:  python -m src.predict [--folds [--models N]]
 """
 import argparse
 import json
@@ -22,12 +24,14 @@ from .train import feature_cols
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--folds", action="store_true")
+    ap.add_argument("--models", type=int, default=CFG["matcher"]["n_folds"], help="--folds: use fold_0..fold_{N-1}")
     a = ap.parse_args()
+    assert 1 <= a.models <= CFG["matcher"]["n_folds"], a.models
     log, M, O = StepLog(), path("models_dir"), path("oof_dir")
     if a.folds:
         cv = json.loads((O / "cv_full.json").read_text())
         feats, t = cv["features"], cv["b_test_density"]["best_t"]
-        bsts = [lgb.Booster(model_file=str(M / f"fold_{k}.txt")) for k in range(CFG["matcher"]["n_folds"])]
+        bsts = [lgb.Booster(model_file=str(M / f"fold_{k}.txt")) for k in range(a.models)]
     else:
         feats = json.loads((M / "lgb_final.json").read_text())["features"]
         t = json.loads((O / "decide.json").read_text())["t"]
@@ -54,7 +58,7 @@ def main() -> None:
     s1_ids = pl.read_parquet(norm_path("test", 1), columns=["entity_id"])["entity_id"]
     write_candidates(path("matching_results"), matches.lazy(), s1_ids, list_col="matched_entity_ids")
     n_with = matches["s1_id"].n_unique()
-    log("decide + write", t=t, matches=matches.height, s1_with_match=n_with, s1_total=s1_ids.len(),
+    log("decide + write", t=t, models=len(bsts), matches=matches.height, s1_with_match=n_with, s1_total=s1_ids.len(),
         empty_pct=round(100 * (1 - n_with / s1_ids.len()), 2))
     log.dump(O / f"predict_timing{'_folds' if a.folds else ''}.json")
 

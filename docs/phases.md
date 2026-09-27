@@ -147,3 +147,19 @@ missing. Revision 2 of docs/breakdown.md written from the real numbers.
 **2026-09-26 M5-2 DONE + Submit #1:** cv_full OOF (b) 0.9746 @ t=0.75 (a: 0.9751); predict --folds -> **LB 0.967** (M4 0.957). OOF->LB gap still -0.008. Backups `output/*_sub1.tsv`.
 
 **2026-09-26 block autopsy DONE:** lexical unions buy <= +0.001 ceiling at +28 cand/S1; 61% of v1 misses are in no channel. Next: stage-2 (M5-3) `stage2 --smoke` -> `stage2`; find the OOF->LB gap (India/France mix); encoder retrieval for the recall ceiling.
+
+**2026-09-26 M5-3 stage 2 BLOCKED on Windows:** no oof/, models/ or full features on this machine; copy them from the M5-2 machine first. Candidates here = v1, which is the set cv_full used. io.py needs a win32 peak_rss_mb before anything imports.
+
+**2026-09-26 M5-2 rebuild on Windows started:** step 1 features memory port onto the M5-2 features.py + io.py win32 peak_rss_mb; self-test OK. Next: old-vs-new smoke, then full features train/test (stop and report before each full run).
+
+**2026-09-26 rebuild step 1 VERIFIED:** features port == M5-2 output on train 2M + test 1M smoke (75/80 bit-identical; *_idfj <= 4.2e-7, old code nondeterministic; new code 80/80 bit-identical across knobs). Record-table peak 11.0 GB train / 10.7 GB test. Waiting for go on full features.
+
+**2026-09-26 rebuild step 2:** trims verified (80/80 exact vs previous port on train+test smoke); features --split train FULL done: 69,043,101 rows, 43.9 min, peak 10,876 MB. features --split test FULL running.
+
+**2026-09-27 rebuild step 2 DONE:** features train + test full scale (peaks 10.9 / 10.5 GB, 44 / 39 min). Step 3 running: cv_full --check, --smoke, --preflight; full cv_full waits for go.
+
+**2026-09-27 rebuild step 3 (pre-run) DONE:** cv_full --check PASSED, --smoke OK, --preflight projects ~11.9 GB peak (but --check measured 12.2 GB working set / 15.5 GB private at full scale). Full cv_full waits for go; then predict --folds, stage2.
+
+**2026-09-27 rebuild step 3 DONE: cv_full FULL** (14.1 h, peak ws 11.4 GB / private 17.2 GB): OOF (a) 0.97455 @ t=0.74, OOF (b) 0.97392 @ t=0.75 vs M5-2 0.97515 / 0.97459 (-0.0006 / -0.0007, mostly India). Probable cause: no token_dict.parquet here -> name_tset_dict = -1 constant. Stopped before predict --folds.
+
+**2026-09-27 M5-2 rebuild -> submission:** user chose single-model scoring (fold_0, t=0.75) for time; predict --folds --models 1 running, then validator. Stage 2 / encoders skipped (deadline). M8 packaging next.
