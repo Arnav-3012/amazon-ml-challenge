@@ -502,3 +502,4 @@
 2026-09-27 | src/normalise.py: ets->etablissements accepted into France token_map (only 2 France S1 names are bare 'ets'); rejected list now b, t, res. Smoke 50k test: untouched rows identical.
 2026-09-27 | src/normalise.py: fixed assert_untouched false failure on full test_s1 (TOUCHED missing 'llp' from the new _LEGAL_FR/_LEGAL_US entry). Full test_s1 now passes: 57,872/1,732,544 rows touched, rest byte-identical.
 2026-09-27 | Session closed by user: target score judged out of reach; all work (M5 probes, gate v1r, normaliser France map) pushed as-is. Best confirmed LB stays Submit #1 0.967. Normaliser full train re-run + downstream rebuild NOT done.
+2026-09-27 | Final public LB 0.971 (user-reported). Root README.md written for GitHub: problem, pipeline, tech stack, results table, worked/dropped, reproduce commands.

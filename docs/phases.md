@@ -202,3 +202,5 @@ missing. Revision 2 of docs/breakdown.md written from the real numbers.
 **2026-09-27 normaliser: France token_map + zero-padded address numbers (smoke-checked, full run pending):** `src/normalise.py`. Verify: `python -m src.normalise --split test` then `--split train` (asserts untouched rows byte-identical to the previous parquet), then re-run blocking/features downstream.
 
 **2026-09-27 STOP — project closed by user.** Best LB 0.967 (Submit #1). Pending, not done: full `normalise --split train`, blocking/features rebuild, retrain with gate v1r.
+
+**2026-09-27 final:** public LB **0.971** (user-reported); root README.md written.

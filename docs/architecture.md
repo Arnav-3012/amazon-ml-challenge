@@ -94,3 +94,4 @@ Format: `path | purpose | what to check when something related breaks`. Update t
 - `code/business_entity_resolution/src/floor_tests.py` | S1-side tie-breaker tests + empty-address tie handling on test + metric definition sanity checks (world/populations from src.tiebreak) → `docs/floor_tests.md` | numbers stale → rerun `python -m src.floor_tests`
 - `code/business_entity_resolution/src/tiebreak.py` | tie-breaking core-name ties using copy signal (populations A=addr_empty, B=core_identical) → `docs/tiebreak.md` | numbers stale → rerun `python -m src.tiebreak`
 - `code/business_entity_resolution/src/addr_empty.py` | grammar/ambiguity analysis + lexical rule for the top loss tag (empty record address) → `docs/addr_empty.md` | numbers stale → rerun `python -m src.addr_empty`
+- `README.md` | GitHub-facing project overview (pipeline, results, stack, reproduce) | numbers stale → docs/phases.md final entry
