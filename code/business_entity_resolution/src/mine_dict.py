@@ -1,5 +1,6 @@
-"""Token-dictionary probe (standalone, no pipeline change): can a mined token map turn blocking vocab misses into
-pairs that share a token with their true S1?
+"""Mines token maps from train pairs; a pipeline step (after src.block --split train, before src.block_r).
+token_dict feeds channel R and the name_tset_dict feature; locality_alias feeds addr_tset_alias / locality_rel.
+The report also measures how many blocking vocab misses the map turns into pairs sharing a token with their S1.
 
 Inputs (train only): norm_train_s{1,2,3}.parquet name/addr tokens, the ground truth, candidates_train_v1.parquet
 (the set D0-1 measured misses against; D0-1 never persisted its miss list), idf_train.parquet (df per token).
@@ -305,7 +306,7 @@ def main() -> None:
     loc_d.write_parquet(LOC_OUT)
     loc_sample = loc_d.sort("co", descending=True).head(30)
 
-    L = ["# Token dictionary probe (src/mine_dict.py)", "",
+    L = ["# Token dictionary (src/mine_dict.py)", "",
          f"Mined on 80% of train S1s' true pairs; evaluated on the missed pairs (not in candidates_train_v1) of the "
          f"held-out 20%. Keep: top-1 co >= {SUPPORT} and share >= {SHARE}. Vocab proxy = no shared name/addr token "
          f"with df <= {CAP}; full-data proxy count {vocab_full:,} vs D0-1 vocab 106,630 (D0-1 also counts C/X "

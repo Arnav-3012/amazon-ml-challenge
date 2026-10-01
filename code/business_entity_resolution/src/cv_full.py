@@ -1,4 +1,4 @@
-"""M5-2 full-data stage-1 matcher: GroupKFold(5) by s1_id on 100% of train S1s, with S1-dropout on the training folds.
+"""Full-data matcher (the submission model): GroupKFold(5) by s1_id on 100% of train S1s, with S1-dropout on the training folds.
 
 Folds: S1 fold = (position in a seed-42 permutation of the sorted S1 ids) mod n_folds; an S1's rows never split.
 Dropout world: drop_frac of ALL train S1s removed (seeded, dead_s1k: independent of any sample). Their rows vanish,
@@ -12,7 +12,7 @@ S1s is the split as-is (test): --check --split test must reproduce the stored te
 that would enter the candidate set (they have no pair features), a rank crossing the m cut (n_channels_hit), the
 gate, corpus IDF shift (idf_{split} df counts include the dropped S1s: *_idfj, *_score, unmatched_max_idf_*).
 Fold k: its own world (seed+1000+k). Training S1s = other folds minus dropped; inner_valid_frac of them (seed+3000+k)
-are the early-stopping set (all their rows); the rest are sampled as in M4 (train.sample_rows). -> models/fold_{k}.txt
+are the early-stopping set (all their rows); the rest are sampled as in train.sample_rows. -> models/fold_{k}.txt
 OOF: each row scored by its fold's model, then the decide.py rule (argmax per record, one global t), macro F0.5:
   (a) standard: stored features, over all S1s.
   (b) test density (PRIMARY): one world (seed+2000), over the remaining S1s; the argmax sees remaining rows only.
@@ -22,7 +22,8 @@ Memory: features are read part by part; only the sampled training rows are held 
 Run from code/business_entity_resolution/:
   python -m src.cv_full --check [--split test]  # no-drop context() must reproduce every stored REC_COLS feature
   python -m src.cv_full --smoke    # 2% of S1s, 50 rounds, *_smoke outputs: end-to-end crash test
-  python -m src.cv_full            # 5 folds + OOF (a) and (b)
+  python -m src.cv_full --fast     # 5 folds + OOF (a) and (b); the submission run (lr 0.1, <= 1500 rounds)
+  python -m src.cv_full            # same at matcher.lgb.learning_rate / num_boost_round
   python -m src.cv_full --curve    # fold 0 at curve_fracs of its training S1s, fixed rounds = fold 0 best iter, on (b)
 """
 import argparse
@@ -92,8 +93,8 @@ class Data:
         self.wcols = [c for c in REC_COLS if c in self.feats]
         gt = load_gt_pairs().select(s1k=id_key("s1_id"), reck=id_key("match_id"), label=pl.lit(1, pl.Int8))
         s1c = s1.select("s1k", "code")
-        # v1 = the M3b candidate set (X_rrank <= blocking.m or X_srank <= blocking.k); everything else is a
-        # v2-only "extension" row. Memory guard (M5-3) subsamples extension-only negatives, never v1 or positive rows.
+        # v1 = block's own candidate set (X_rrank <= blocking.m or X_srank <= blocking.k); everything else is a
+        # gate-only "extension" row. The memory guard subsamples extension-only negatives, never v1 or positive rows.
         v1 = ((pl.col("X_rrank") <= BCFG["m"]) | (pl.col("X_srank") <= BCFG["k"])).fill_null(False)
         self.meta = pl.concat([  # part by part: only one part's id strings are alive at a time
             pl.read_parquet(f, columns=[*ID_COLS, *SCORE_COLS, "X_rrank", "X_srank"]).with_row_index("_i", int(lo))

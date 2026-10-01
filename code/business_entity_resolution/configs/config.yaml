@@ -17,25 +17,25 @@ blocking:
   sweep_df_cap: [500, 1000, 5000]
   nnz_budget: 40000000  # max upper-bound nnz of one sparse product chunk (memory knob, not a result knob)
   s1_range: 100000      # S1 rows per merge slice
-  r_query_pct: 10      # M5-4 src.block_r: query channel R for the bottom r_query_pct% of records per country by
-                        # best v1 X_score, plus every zero-v1 record; top-3 S1s kept (docs/block_autopsy3.md §curve)
+  r_query_pct: 10       # src.block_r: query channel R for the bottom r_query_pct% of records per country by
+                        # best v1 X_score, plus every zero-v1 record; top-3 S1s kept
 
-gate:                   # M5-1 blocking v2 (src.gate). m/k/select above stay the v1 definition (variant "v1")
+gate:                   # src.gate. blocking.m/k/select above define the v1 set that variants v1/v1r rank first
   pool_k: 30            # pool = all channels, record-centric top-m U S1-centric top-pool_k; test grid is built at
                         # max(sweep_m) / pool_k, train reads blockgrid_train (m<=10, k<=60)
   sweep_m: [5, 10]
   sweep_n: [30, 35, 40, 45, 50, 60]
   buckets: 16           # S1 hash buckets per pass (memory knob, not a result knob)
-  m: 10                 # CHOSEN after `src.gate --eval` (docs/blocking_v2.md); must be in sweep_m
-  n: 45                 # per-S1 cap; must be <= max(sweep_n). Decided (docs/decisions_mistakes.md); n>60 gated on --preflight RSS
+  m: 10                 # chosen with `src.gate --eval`; must be in sweep_m
+  n: 45                 # per-S1 cap; must be <= max(sweep_n). Ceiling 0.9946 at n=45 (v1r); n=60 adds +0.0009 for +15 cand/S1
   sibling:
-    enabled: false      # flip after reading docs/blocking_v2.md §sibling
+    enabled: false      # optional sibling-anchor union (src.sibling); evaluated, not used
     delta: null         # sib_margin to union at --apply time, once enabled
   variant: v1r          # pre = order by pre-score; v1 = v1 set first, then pre-score; v1r = v1, then r_hit, then pre
-  sib_margin: [0.05, 0.1, 0.2]  # M5-1b src.sibling: anchor top1-top2 pre-score margin sweep (docs/blocking_v2.md §sibling)
+  sib_margin: [0.05, 0.1, 0.2]  # src.sibling: anchor top1-top2 pre-score margin sweep
   ceiling: 0.993        # `gate --eval` (train) asserts the configured (m, n, variant) row's F0.5 ceiling >= this
 
-cv_full:                # M5-2 (src.cv_full)
+cv_full:                # src.cv_full (the submission matcher)
   drop_frac: 0.19       # S1-dropout: train 4.68 S2/S3 records per S1 / 0.81 = 5.78 = test density (5.75)
   inner_valid_frac: 0.1 # share of a fold's training S1s held out for early stopping
   curve_fracs: [0.2, 0.5]
@@ -46,11 +46,12 @@ cv_full:                # M5-2 (src.cv_full)
   preflight_rounds: 50  # fixed LightGBM rounds per preflight point
   macro_weight: false   # row weight *= 1/max(1, ntrue(S1)), renormalised to mean 1 over kept rows (macro-F proxy)
 
+# Experiments below are not part of the pipeline.
 world_skew:             # src.world_skew: stale vs recomputed CONTEXT (cv_full.CTX_COLS) on OOF (b), fast params
   sample_frac: 0.2      # training S1s = this prefix of s1_table's permutation; scoring = every S1 alive in (b)
   max_rss_mb: 10000     # stop if the process peak RSS passes this
 
-stage2:                 # M5-3 (src.stage2): stacked GBM on stage-1 OOF (b) p
+stage2:                 # src.stage2: stacked GBM on stage-1 OOF (b) p; not used by the submission
   n_carry: 10           # strongest stage-1 features by summed fold gain (record-side REC_COLS excluded)
   coref_p: 0.8          # anchor = another record of the S1 with stage-1 p above this
   coref_sim: 90         # anchor supports the row when name_tset (or addr_tset) to it >= this

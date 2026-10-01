@@ -1,4 +1,4 @@
-"""M3b blocking v1: within-country inverted-index retrieval over IDF-weighted, df-capped tokens.
+"""Blocking: within-country inverted-index retrieval over IDF-weighted, df-capped tokens.
 
 Channels. For each, score(s1, rec) = sum of idf(t) over shared surviving tokens, idf = ln(N_country / df):
   A  core-name tokens (+ adjacent bigrams "a_b"); name_tokens come from core_name, so legal form is unused
@@ -6,7 +6,7 @@ Channels. For each, score(s1, rec) = sum of idf(t) over shared surviving tokens,
   C  phonetic skeletons of name tokens ("n:", + skeleton bigrams) and address tokens ("a:"), see src.phonetic
   X  combined: A tokens as "A|t", B as "B|t", C as-is, plus (composite) "K|<name skel>|<addr skel>" pair tokens.
      One ranking over all evidence; the K pairs carry the name-AND-address conjunction that single tokens lose
-     to the df cap (docs/blocking.md sampled miss causes: 50% all-over-cap, 50% rank cut)
+     to the df cap (in a sample of misses, half had every token over the cap, half were cut by rank)
 df counts records over S1+S2+S3 of that country in this split (test IDF comes from test). A token is
 linkable if it occurs in S1 and in S2/S3. Surviving tokens of a record = its linkable tokens with
 df <= df_cap; in A and C (fallback_rarest) a record with none keeps its 2 lowest-df linkable tokens
@@ -20,13 +20,14 @@ country x per source, and one split per process.
 Both splits write a rank grid blockgrid_{split}_cap{cap}.parquet: train keeps ranks up to max(sweep_m) /
 max(sweep_k), test up to max(gate.sweep_m) / gate.pool_k. src.gate cuts either grid to the same m/k (identical
 to a direct m/k run: ranks are intrinsic to each direction) and writes candidates_{split} + candidate_pairs.tsv.
+The v1 set (channel X at blocking.m/k) is also written as candidates_{split}_v1.parquet for src.block_r and src.gate.
 
 Run from code/business_entity_resolution/:
   python -m src.block --selftest                     # synthetic: sparse pipeline == pure-Python brute force
   python -m src.block --split train --dry            # df + survivor pass: zero-token %, product nnz bound
   python -m src.block --split train --smoke 300000   # first N rows per file; *_smoke outputs; prints nnz/s
-  python -m src.block --split train                  # blockgrid_train_cap1000 + idf_train
-  python -m src.block --split test                   # blockgrid_test_cap1000 + idf_test
+  python -m src.block --split train                  # blockgrid_train_cap1000 + idf_train + candidates_train_v1
+  python -m src.block --split test                   # blockgrid_test_cap1000 + idf_test + candidates_test_v1
 """
 import argparse
 import json
@@ -342,7 +343,12 @@ def main() -> None:
         with pl.Config(tbl_rows=-1, tbl_cols=-1, fmt_str_lengths=60, tbl_width_chars=250):
             print(pl.DataFrame(surv).drop("top_cost_tokens"))
     else:
-        pl.scan_parquet(parts / "*.parquet").sink_parquet(out / f"blockgrid_{split}_cap{cap}{sfx}.parquet")
+        grid = out / f"blockgrid_{split}_cap{cap}{sfx}.parquet"
+        pl.scan_parquet(parts / "*.parquet").sink_parquet(grid)
+        if cap == BCFG["df_cap"]:
+            # v1 candidate set (X at blocking.m/k): block_r picks its query records from it, the gate ranks it first
+            finalize(pl.scan_parquet(grid), BCFG["m"], BCFG["k"], tuple(BCFG["select"])).sink_parquet(
+                out / f"candidates_{split}_v1{sfx}.parquet")
         log("sink outputs")
     shutil.rmtree(parts)
     total = {"split": split, "df_cap": cap, "m_max": m_max, "k_max": k_max, "bigrams": BCFG["bigrams"],

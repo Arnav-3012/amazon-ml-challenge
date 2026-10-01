@@ -1,8 +1,9 @@
-"""M4 inference: models/lgb_final.txt scores every test candidate (artifacts/features/test, part by part), then
-the decide.py rule: per record keep its argmax-p S1 (ties -> lowest s1_id), keep it if p >= t (oof/decide.json).
+"""Inference: score every test candidate (artifacts/features/test, part by part), then the decide.py rule:
+per record keep its argmax-p S1 (ties -> lowest s1_id), keep it if p >= t.
+--folds (the submission): p = mean of models/fold_{k}.txt from src.cv_full, t = best t of the test-density OOF
+(oof/cv_full.json, b); the scored pairs are also kept in oof/test_p.parquet.
+Without --folds: models/lgb_final.txt from src.train --final, t from oof/decide.json.
 Writes output/matching_results.tsv (one row per test S1, "" when none) and asserts matches ⊆ candidates.
---folds (M5-2): p = mean of models/fold_{k}.txt, t = best t of the test-density OOF (oof/cv_full.json, b); the
-scored pairs are also kept in oof/test_p.parquet (stage-2 input).
 
 Run from code/business_entity_resolution/:  python -m src.predict [--folds]
 """

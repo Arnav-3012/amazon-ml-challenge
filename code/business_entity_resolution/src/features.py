@@ -1,4 +1,4 @@
-"""M4 pair features for EVERY candidate pair of a split -> artifacts/features/{split}/part-*.parquet.
+"""Pair features for EVERY candidate pair of a split -> artifacts/features/{split}/part-*.parquet.
 
 Country-agnostic: no country column is written. Country is used only to look up the per-country IDF that
 blocking already used (idf_{split}.parquet), never as a value.
@@ -314,8 +314,7 @@ def unmatched_tokens(a_name: pl.Series, b_name: pl.Series, a_addr: pl.Series, b_
 
 
 def name_tset_dict(a_core: pl.Series, b_core: pl.Series, dict_map: dict | None) -> np.ndarray:
-    """name_tset recomputed after remapping tokens via token_dict.parquet (field='name'); -1 sentinel if the
-    parquet doesn't exist (M5 dict not yet mined)."""
+    """name_tset recomputed after remapping tokens via token_dict.parquet (field='name'); -1 if dict_map is None."""
     n = a_core.len()
     if dict_map is None:
         return np.full(n, -1.0, np.float32)
@@ -326,22 +325,22 @@ def name_tset_dict(a_core: pl.Series, b_core: pl.Series, dict_map: dict | None) 
     return _cp(ra, rb, fuzz.token_set_ratio)
 
 
-def load_token_dict() -> dict | None:
-    """{src_token: tgt_token} for field == 'name', or None if artifacts/interim/token_dict.parquet is absent."""
-    p = path("interim_dir") / "token_dict.parquet"
-    if not p.exists():
-        return None
-    d = pl.read_parquet(p).filter(pl.col("field") == "name")
+def _mined_map(name: str) -> pl.DataFrame:
+    p = path("interim_dir") / name
+    if not p.exists():  # a silent fallback would train and score on -1 placeholders
+        raise FileNotFoundError(f"{p} missing -- run `python -m src.mine_dict` first")
+    return pl.read_parquet(p)
+
+
+def load_token_dict() -> dict:
+    """{src_token: tgt_token} for field == 'name', from src.mine_dict's token_dict.parquet."""
+    d = _mined_map("token_dict.parquet").filter(pl.col("field") == "name")
     return dict(zip(d["s"].to_list(), d["t"].to_list()))
 
 
-def load_locality_dict() -> dict | None:
-    """{src_locality_token: tgt_locality_token}, or None if artifacts/interim/locality_alias.parquet is absent
-    (src.mine_dict not yet run for M5-4)."""
-    p = path("interim_dir") / "locality_alias.parquet"
-    if not p.exists():
-        return None
-    d = pl.read_parquet(p)
+def load_locality_dict() -> dict:
+    """{src_locality_token: tgt_locality_token}, from src.mine_dict's locality_alias.parquet."""
+    d = _mined_map("locality_alias.parquet")
     return dict(zip(d["s"].to_list(), d["t"].to_list()))
 
 

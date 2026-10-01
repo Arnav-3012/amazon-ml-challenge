@@ -204,3 +204,7 @@ missing. Revision 2 of docs/breakdown.md written from the real numbers.
 **2026-09-27 STOP — project closed by user.** Best LB 0.967 (Submit #1). Pending, not done: full `normalise --split train`, blocking/features rebuild, retrain with gate v1r.
 
 **2026-09-27 final:** public LB **0.971** (user-reported); root README.md written.
+
+**2026-10-01 submission package (docs only, no code changes):** `Documentation_template.md`, `code/business_entity_resolution/README.md`, `README.md`. Verify: `python3 utils/validate_submission.py --matching output/matching_results.tsv --candidate output/candidate_pairs.tsv --test-dir dataset/test`, then build the zip and `unzip -l` it.
+
+**2026-10-01 prod-grade pass:** `src/block.py` (writes candidates_{split}_v1), `src/features.py` (dict loaders raise), `src/tfidf.py` (new), `src/block_r.py`, `src/block_autopsy3.py`, docstrings in gate/decide/cv_full/train/predict/normalise/phonetic/mine_dict, `configs/config.yaml` comments, both READMEs, Documentation_template.md. Verify: `cd code/business_entity_resolution && python -m src.block --selftest`.

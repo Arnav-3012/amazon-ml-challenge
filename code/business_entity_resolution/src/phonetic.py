@@ -1,4 +1,4 @@
-"""M3b phonetic skeleton: a lossy consonant key that makes transliteration/OCR variants collide.
+"""Phonetic skeleton: a lossy consonant key that makes transliteration/OCR variants collide.
 
 skeleton(): sh->s, ph->f, w->v, c/q->k, z->j, m/n before a consonant -> n, drop vowels except the first
 char (a leading vowel becomes the marker "a", so istrn ~ eastern), collapse repeats. A non-initial y counts

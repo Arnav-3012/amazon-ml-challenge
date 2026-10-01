@@ -160,10 +160,12 @@ brew install libomp          # macOS: required by LightGBM
 cd code/business_entity_resolution
 python -m src.normalise                                  # both splits
 python -m src.block   --split train && python -m src.block   --split test
+python -m src.mine_dict                                  # token maps (train only)
 python -m src.block_r --split train && python -m src.block_r --split test
-python -m src.gate    --split train --apply && python -m src.gate --split test --apply
+python -m src.gate --split train && python -m src.gate --split test
+python -m src.gate --eval && python -m src.gate --apply  # writes output/candidate_pairs.tsv
 python -m src.features --split train && python -m src.features --split test
-python -m src.cv_full                                    # 5-fold OOF + threshold
+python -m src.cv_full --fast                             # 5-fold OOF + threshold (final run used --fast)
 python -m src.predict --folds                            # writes output/matching_results.tsv
 
 cd ../.. && python3 utils/validate_submission.py --matching output/matching_results.tsv \

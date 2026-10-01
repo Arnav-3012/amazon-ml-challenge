@@ -24,13 +24,10 @@ Run from code/business_entity_resolution/:
 import argparse
 import os
 import time
-from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 import polars as pl
 import scipy.sparse as sp
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.preprocessing import normalize
 
 from .block import norm_path
 from .block_autopsy import V1_PATH, in_sample
@@ -39,6 +36,8 @@ from .gate import PAIR, ceiling
 from .io import CFG, ROOT, StepLog, load_gt_pairs, path, peak_rss_mb
 from .mine_dict import HOLD, OUT as DICT_PATH
 from .normalise import NONASCII
+from .tfidf import load_tokens, strings, vectorize
+from .tfidf import products as _products
 
 KS = (1, 3, 5, 10, 20)
 MS = (3, 5, 10)
@@ -50,9 +49,7 @@ SPEC = {"V0": [("addr", "word", (1, 1))], "V1": [("name", "char", (3, 3))],
 DICT_VARIANTS = {"V4"}
 P2_VARIANTS = ("V1", "V2", "V4")
 THREADS = min(6, os.cpu_count() or 1)
-DENSE_BYTES = 256 << 20  # per thread, for the n_S1 x c result and the vocab x c query block (memory knob only)
 MAX_RSS_MB = 10_000
-TOK = ["entity_id", "country", "name_tokens", "addr_tokens"]
 REPORT = ROOT / "docs" / "block_autopsy3.md"
 
 PART0 = [
@@ -80,46 +77,8 @@ PART0 = [
     "It is a memory knob and truncates nothing. There is no N-rarest-token truncation outside the fallback.", ""]
 
 
-def load_tokens(split: str, n: int, country: str | None = None, ids: pl.Series | None = None,
-                extra: tuple[str, ...] = ()) -> pl.DataFrame:
-    lf = pl.scan_parquet(norm_path(split, n))
-    if country is not None:
-        lf = lf.filter(pl.col("country") == country)
-    if ids is not None:
-        lf = lf.filter(pl.col("entity_id").is_in(ids.implode()))
-    return lf.select(*TOK, *extra).collect(engine="streaming")
-
-
-def strings(df: pl.DataFrame, d: dict[str, dict] | None = None) -> pl.DataFrame:
-    """name (tokens joined, no spaces), addr (tokens joined by space), joint; token_dict applied first if given."""
-    if d:
-        df = df.with_columns(pl.col(f"{f}_tokens").list.eval(pl.element().replace(m)) for f, m in d.items())
-    name, addr = pl.col("name_tokens").list.join(""), pl.col("addr_tokens").list.join(" ")
-    return df.select(name=name, addr=addr, joint=pl.concat_str(name, pl.lit(" "), addr).str.strip_chars())
-
-
-def vectorize(spec: list, s1: pl.DataFrame, queries: list[pl.DataFrame]) -> tuple[sp.csr_matrix, list]:
-    """Fit on the S1 strings; returns S1 matrix and one matrix per query frame (rows L2-normed)."""
-    vecs = [TfidfVectorizer(analyzer=a, ngram_range=g, lowercase=False, dtype=np.float32,
-                            **({"token_pattern": r"\S+"} if a == "word" else {})) for _, a, g in spec]
-    mats = [[v.fit_transform(s1[col].to_list()) for v, (col, _, _) in zip(vecs, spec)]]
-    mats += [[v.transform(q[col].to_list()) for v, (col, _, _) in zip(vecs, spec)] for q in queries]
-    out = [normalize(sp.hstack(m, format="csr")) if len(m) > 1 else m[0].tocsr() for m in mats]
-    return out[0], out[1:]
-
-
 def products(S: sp.csr_matrix, Q: sp.csr_matrix, fn) -> list:
-    """[fn(lo, R)] over chunks of Q rows, R = S @ Q[lo:hi].T as dense n_S1 x c, THREADS at a time, in order.
-    scipy's sparse x dense kernel releases the GIL, so the threads run in parallel."""
-    c = int(np.clip(DENSE_BYTES // (4 * max(S.shape)), 8, 128))
-
-    def one(lo: int):
-        out = fn(lo, S @ Q[lo:lo + c].T.toarray())
-        if peak_rss_mb() > MAX_RSS_MB:
-            raise MemoryError(f"peak RSS {peak_rss_mb()} MB > {MAX_RSS_MB}: lower DENSE_BYTES or THREADS")
-        return out
-    with ThreadPoolExecutor(THREADS) as ex:
-        return list(ex.map(one, range(0, Q.shape[0], c)))
+    return _products(S, Q, fn, THREADS, MAX_RSS_MB)
 
 
 def ranks(S: sp.csr_matrix, Q: sp.csr_matrix, tgt: np.ndarray) -> np.ndarray:

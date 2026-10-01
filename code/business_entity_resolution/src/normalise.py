@@ -1,4 +1,4 @@
-"""M3a normaliser v1: vectorised polars rules that invert the noise operators mined by src.noise_ops.
+"""Normaliser: vectorised polars rules that invert the noise operators seen in train (src.noise_ops).
 
 `normalise(df, off)` is pure: raw source rows (entity_id, business_name, business_address, country) in,
 raw columns kept untouched + the normalised columns in OUT_COLS out, row order preserved. `off` disables
@@ -21,11 +21,12 @@ from anyascii import anyascii
 
 from .io import load_source, path, peak_rss_mb  # noqa: F401  (peak_rss_mb re-exported for block/normalise_eval)
 
-# Rule names in execution order (see docs/normalise.md). Structural steps (lowercase, punct/whitespace
+# Rule names in execution order. Structural steps (lowercase, punct/whitespace
 # strip, address component parse) always run; everything listed here can be ablated.
 NAME_RULES = ("anyascii", "alias_split", "id_tag", "acronym_dots", "domain_strip", "trailing_phone", "digit_fix",
               "dedupe_adjacent", "token_map", "legal_form", "honorifics")
-# Reverted after the M3a ablation (docs/decisions_mistakes.md): country_marker, amp_and, landmark.
+# Reverted after ablation (each created more false exact collisions than it fixed): country_marker, amp_and,
+# landmark.
 ADDR_RULES = ("number_prefix", "street_type", "ordinal", "num_zeros", "null_token", "admin_region")
 RULES = NAME_RULES + ADDR_RULES  # anyascii applies to both fields
 
@@ -94,8 +95,8 @@ _STREET_US = _forms("st=street=saint|rd=road|dr=drive|ave=avenue=av|ln=lane|blvd
 _STREET_IN = _forms("rd=road|st=street|nagar=ngr")
 _STREET_FR = _forms("rue=r|ave=avenue=av|blvd=boulevard=bd|route=rte|allee=all|place=pl|impasse=imp|"
                     "chemin=ch=chem|st=saint|ste=sainte")
-# Mined from TEST inputs (docs/france_deep.md §E: token pairs on France test pairs with p>=0.98; France is
-# test-only). Kept: address pairs >=200, name pairs >=60 (+ culb/cbu). Rejected because the record-side token
+# Mined from unlabelled TEST inputs (token pairs on France test pairs scored p>=0.98 by the matcher; France is
+# test-only, no labels or external data used). Kept: address pairs >=200, name pairs >=60 (+ culb/cbu). Rejected because the record-side token
 # is frequent France test-S1 vocabulary (>=100 occurrences): b 1665, t 154, res 101 (single letters always out).
 # ets is exempt: 5258/5307 S1 uses are the "Ets X" prefix itself; only 2 S1 names are bare "ets" (collision case).
 _ADDR_FR = _forms("cours=crs|quai=q|passage=pass|ave=aveue=avnue=aveneu=aveune=avene|allee=alee")

@@ -1,11 +1,11 @@
-"""M4 LightGBM pair matcher on artifacts/features/train (see src.features).
+"""LightGBM pair matcher on a subset of train (single-model path; the submission uses src.cv_full).
 
 Subset = first `fraction` of a seed-42 permutation of the sorted train S1 ids, so the 20% iteration subset
 is nested in the final-fit subset. Every candidate of a subset S1 is loaded (its relative features were
 computed against the full candidate set).
 Training rows = all positives + neg_ratio x as many negatives: hard_frac of them hardest-first by the max
 channel score, the rest uniform (seeded). Negative subsampling shifts the base rate, so p is not calibrated;
-decide.py tunes the threshold on OOF p (M5 needs a recalibration step before expected-F0.5 decisions).
+decide.py tunes the threshold on OOF p.
 
 Modes (run from code/business_entity_resolution/):
   python -m src.train            # GroupKFold(5) by s1_id on the subset; held-out fold scored on ALL its
